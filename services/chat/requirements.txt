@@ -6,7 +6,7 @@ langchain-openai==0.1.25
 langchain-community==0.2.16
 langchain-core==0.2.40
 langchain-text-splitters==0.2.4
-openai==1.40.0
+openai==1.37.1 # <--- UPDATED
 asyncpg==0.29.0
 redis==5.0.1
 pydantic==2.5.0
