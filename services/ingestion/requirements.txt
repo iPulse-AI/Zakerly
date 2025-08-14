@@ -11,16 +11,14 @@ langchain-core==0.2.9
 langchain-community==0.2.5
 langchain-openai==0.1.8
 langchain-text-splitters==0.2.1
-langchain-google-genai==1.0.7 # For Gemini models
+langchain-google-genai==1.0.7
 
 # LLM & Embedding Providers
 openai==1.35.3
 
-# External Tools
-tavily-python==0.3.3
-
 # Database & Cache Connectors
 psycopg2-binary==2.9.9
+asyncpg==0.29.0 # <--- THIS IS THE FIX. THE MISSING LIBRARY.
 pgvector==0.2.5
 redis==5.0.4
 
@@ -32,7 +30,6 @@ python-dotenv==1.0.1
 pydantic==2.7.4
 numpy==1.26.4
 tenacity==8.4.1
-httpx==0.27.0
 
 # Monitoring
 prometheus-client==0.20.0
