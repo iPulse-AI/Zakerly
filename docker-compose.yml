@@ -1,0 +1,162 @@
+
+
+services:
+  # PostgreSQL with pgvector extension
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: zakerly_postgres
+    environment:
+      POSTGRES_DB: zakerly_db
+      POSTGRES_USER: zakerly_user
+      POSTGRES_PASSWORD: zakerly_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - zakerly_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zakerly_user -d zakerly_db"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # pgAdmin for database management
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: zakerly_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@zakerly.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+    ports:
+      - "8080:80"
+    depends_on:
+      - postgres
+    networks:
+      - zakerly_network
+
+  # Redis for caching and session management
+  redis:
+    image: redis:7-alpine
+    container_name: zakerly_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - zakerly_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Document Ingestion Service
+  ingestion-service:
+    build:
+      context: .
+      dockerfile: ./services/ingestion/Dockerfile
+    container_name: zakerly_ingestion
+    environment:
+      - DATABASE_URL=postgresql://zakerly_user:zakerly_password@postgres:5432/zakerly_db
+      - REDIS_URL=redis://redis:6379
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./uploads:/app/uploads
+    networks:
+      - zakerly_network
+
+  # Chat Service
+  chat-service:
+    build:
+      context: .
+      dockerfile: ./services/chat/Dockerfile
+    container_name: zakerly_chat
+    environment:
+      - DATABASE_URL=postgresql://zakerly_user:zakerly_password@postgres:5432/zakerly_db
+      - REDIS_URL=redis://redis:6379
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+    ports:
+      - "8002:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - zakerly_network
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: .
+      dockerfile: ./services/gateway/Dockerfile
+    container_name: zakerly_gateway
+    environment:
+      - INGESTION_SERVICE_URL=http://ingestion-service:8000
+      - CHAT_SERVICE_URL=http://chat-service:8000
+      - REDIS_URL=redis://redis:6379
+    ports:
+      - "8000:8000"
+    depends_on:
+      - ingestion-service
+      - chat-service
+    networks:
+      - zakerly_network
+
+  # Frontend UI
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: zakerly_frontend
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000  
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api-gateway
+    networks:
+      - zakerly_network
+
+  # Monitoring with Prometheus
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: zakerly_prometheus
+    ports:
+      - "9090:9090"  # This is a port mapping
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml # This is a volume mount
+    networks:
+      - zakerly_network
+
+  # Grafana for monitoring dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: zakerly_grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123  #user:admin, pass:admin123
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - zakerly_network
+
+volumes:
+  postgres_data:
+  grafana_data:
+
+networks:
+  zakerly_network:
+    driver: bridge
