@@ -4,12 +4,13 @@ import json
 import os
 from datetime import datetime
 
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_community.embeddings import OllamaEmbeddings
 from langchain_community.vectorstores.pgvector import PGVector
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.messages import HumanMessage, AIMessage
-from langchain.agents import AgentExecutor, create_openai_tools_agent
+from langchain.agents import AgentExecutor, create_google_genai_tools
 from langchain_core.tools import Tool
 import httpx
 
@@ -31,14 +32,15 @@ class ChatService:
         self.redis = redis_manager
         
         # Initialize LangChain components
-        self.embeddings = OpenAIEmbeddings(
-            openai_api_key=os.getenv("OPENAI_API_KEY")
+        self.embeddings = OllamaEmbeddings(
+            model='nomic-embed-text',
+            base_url="http://172.24.55.55:11434"
         )
         
-        self.llm = ChatOpenAI(
-            model="gpt-4",
+        self.llm = ChatGoogleGenerativeAI(
+            model="gemini-pro",
             temperature=0.7,
-            openai_api_key=os.getenv("OPENAI_API_KEY")
+            google_api_key=os.getenv("GOOGLE_API_KEY")
         )
         
         self.connection_string = os.getenv("DATABASE_URL")
@@ -239,7 +241,7 @@ Your primary goal is to act as an expert educator, transforming raw information 
             ]
             
             # Create agent
-            agent = create_openai_tools_agent(self.llm, tools, self.answering_prompt)
+            agent = create_google_genai_tools(self.llm, tools, self.answering_prompt)
             agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
             
             # Execute
@@ -445,7 +447,7 @@ Generate {count} questions with varied difficulty and types. Base all questions 
             
             # Create agent for lecture generation
             tools = [knowledge_tool]
-            agent = create_openai_tools_agent(self.llm, tools, self.lecture_prompt)
+            agent = create_google_genai_tools(self.llm, tools, self.lecture_prompt)
             agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
             
             # Generate lecture

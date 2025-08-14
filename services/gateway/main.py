@@ -52,11 +52,6 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Increase file upload size limit to 100MB
-app.add_middleware(
-    lambda app: app,
-    max_request_size=100 * 1024 * 1024  # 100MB
-)
 
 # CORS middleware
 app.add_middleware(

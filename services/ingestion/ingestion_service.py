@@ -6,7 +6,8 @@ import json
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_community.embeddings import OllamaEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.vectorstores.pgvector import PGVector
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
@@ -30,14 +31,15 @@ class IngestionService:
         self.redis = redis_manager
         
         # Initialize LangChain components
-        self.embeddings = OpenAIEmbeddings(
-            openai_api_key=os.getenv("OPENAI_API_KEY")
+        self.embeddings = OllamaEmbeddings(
+            model='nomic-embed-text',
+            base_url="http://172.24.55.55:11434"
         )
         
-        self.llm = ChatOpenAI(
-            model="gpt-4",
+        self.llm = ChatGoogleGenerativeAI(
+            model="gemini-pro",
             temperature=0,
-            openai_api_key=os.getenv("OPENAI_API_KEY")
+            google_api_key=os.getenv("GOOGLE_API_KEY")
         )
         
         self.text_splitter = RecursiveCharacterTextSplitter(

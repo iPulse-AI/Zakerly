@@ -9,12 +9,11 @@ requests==2.32.3
 langchain==0.2.5
 langchain-core==0.2.9
 langchain-community==0.2.5
-langchain-openai==0.1.8
 langchain-text-splitters==0.2.1
 langchain-google-genai==1.0.7
+ollama==0.2.1
 
 # LLM & Embedding Providers
-openai==1.35.3
 
 # Database & Cache Connectors
 psycopg2-binary==2.9.9
