@@ -81,10 +81,32 @@ const UploadPage = () => {
       
     } catch (error) {
       setUploadStatus('error');
-      setErrorMessage(
-        error.response?.data?.detail || 
-        `Failed to upload "${file.name}": ${error.message}`
-      );
+      
+      // Handle different error types
+      if (error.response?.status === 409) {
+        // Duplicate book
+        setErrorMessage(
+          error.response?.data?.detail || 
+          `This book already exists in your library.`
+        );
+      } else if (error.response?.status === 400) {
+        // Bad request (unsupported file type, etc.)
+        setErrorMessage(
+          error.response?.data?.detail || 
+          `Invalid file: ${error.message}`
+        );
+      } else if (error.response?.status >= 500) {
+        // Server error
+        setErrorMessage(
+          `Server error while processing "${file.name}". Please try again later.`
+        );
+      } else {
+        // Generic error
+        setErrorMessage(
+          error.response?.data?.detail || 
+          `Failed to upload "${file.name}": ${error.message}`
+        );
+      }
     }
   };
 

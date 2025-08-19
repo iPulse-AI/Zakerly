@@ -32,12 +32,12 @@ class IngestionService:
         
         # Initialize LangChain components
         self.embeddings = OllamaEmbeddings(
-            model='nomic-embed-text',
-            base_url="http://172.24.55.55:11434"
+            model='nomic-embed-text:latest',
+            base_url=os.getenv("OLLAMA_BASE_URL")
         )
         
         self.llm = ChatGoogleGenerativeAI(
-            model="gemini-pro",
+            model="gemini-1.5-flash",
             temperature=0,
             google_api_key=os.getenv("GOOGLE_API_KEY")
         )
@@ -156,8 +156,9 @@ Respond with ONLY the JSON object, no additional text."""),
                 # For other formats, try to decode as text
                 text = content.decode('utf-8', errors='ignore')
             
-            # Limit text length for metadata extraction
-            return text[:8000] if len(text) > 8000 else text
+            # Return full text for processing, but log length
+            logger.info(f"Extracted text length: {len(text)} characters")
+            return text
             
         except Exception as e:
             logger.error(f"Error extracting text from {filename}: {e}")
@@ -165,19 +166,53 @@ Respond with ONLY the JSON object, no additional text."""),
 
     async def _extract_metadata(self, text: str, file_hash: str, filename: str) -> BookMetadata:
         """Extract metadata using LLM"""
+        result = ""
         try:
             # Create chain
             chain = self.metadata_prompt | self.llm | StrOutputParser()
             
-            # Run extraction
+            # Run extraction with limited text for LLM
+            text_for_llm = text[:8000] if len(text) > 8000 else text
             result = await chain.ainvoke({
-                "text": text,
+                "text": text_for_llm,
                 "file_hash": file_hash,
                 "file_name": filename
             })
             
+            # Clean and validate the result
+            result = result.strip()
+            if not result:
+                logger.warning("Empty response from LLM, using fallback metadata")
+                raise ValueError("Empty response from LLM")
+            
+            # Try to extract JSON from the response if it contains extra text
+            if result.startswith('```json'):
+                result = result.replace('```json', '').replace('```', '').strip()
+            elif result.startswith('```'):
+                result = result.replace('```', '').strip()
+            
+            # Find JSON object in the response
+            start_idx = result.find('{')
+            end_idx = result.rfind('}')
+            if start_idx != -1 and end_idx != -1:
+                result = result[start_idx:end_idx+1]
+            else:
+                logger.warning("No valid JSON found in LLM response, using fallback metadata")
+                raise ValueError("No valid JSON found in response")
+            
             # Parse JSON response
-            metadata_dict = json.loads(result.strip())
+            try:
+                metadata_dict = json.loads(result)
+            except json.JSONDecodeError as json_error:
+                logger.warning(f"JSON decode error: {json_error}, using fallback metadata")
+                raise ValueError(f"Invalid JSON: {json_error}")
+            
+            # Validate required fields
+            required_fields = ['subject', 'category_id', 'title', 'file_hash', 'file_name']
+            for field in required_fields:
+                if field not in metadata_dict:
+                    logger.warning(f"Missing required field: {field}, using fallback metadata")
+                    raise ValueError(f"Missing required field: {field}")
             
             # Create BookMetadata object
             metadata = BookMetadata(
@@ -190,20 +225,30 @@ Respond with ONLY the JSON object, no additional text."""),
                 file_name=metadata_dict['file_name']
             )
             
+            logger.info(f"Successfully extracted metadata for: {metadata.title}")
             return metadata
             
         except Exception as e:
             logger.error(f"Error extracting metadata: {e}")
+            logger.error(f"LLM response was: {result if result else 'No response'}")
+            
+            # Determine subject from filename for physics book
+            subject = "physics" if "physics" in filename.lower() else "general"
+            category_id = 3 if subject == "physics" else 7
+            
             # Fallback to basic metadata
-            return BookMetadata(
-                subject="general",
-                category_id=7,
+            fallback_metadata = BookMetadata(
+                subject=subject,
+                category_id=category_id,
                 title=sanitize_title_for_table(filename.split('.')[0]),
                 author=None,
                 publication_year=None,
                 file_hash=file_hash,
                 file_name=filename
             )
+            
+            logger.info(f"Using fallback metadata: {fallback_metadata.title}")
+            return fallback_metadata
 
     async def _create_vector_store(self, text: str, table_name: str):
         """Create vector store for the book"""
@@ -211,18 +256,61 @@ Respond with ONLY the JSON object, no additional text."""),
             # Split text into chunks
             documents = self.text_splitter.create_documents([text])
             
-            # Create PGVector store
+            # Create embeddings for all documents
+            texts = [doc.page_content for doc in documents]
+            embeddings_list = await self.embeddings.aembed_documents(texts)
+            
+            # Determine embedding dimension from first embedding
+            if not embeddings_list:
+                raise ValueError("No embeddings generated")
+            
+            embedding_dim = len(embeddings_list[0])
+            logger.info(f"Embedding dimension: {embedding_dim}")
+            
+            # Create table and insert vectors directly
             connection_string = os.getenv("DATABASE_URL")
             
-            vector_store = PGVector.from_documents(
-                documents=documents,
-                embedding=self.embeddings,
-                connection_string=connection_string,
-                collection_name=table_name.lower(),
-                pre_delete_collection=False
-            )
+            # Use asyncpg to create table and insert data
+            import asyncpg
+            conn = await asyncpg.connect(connection_string)
             
-            logger.info(f"Created vector store for {table_name} with {len(documents)} chunks")
+            try:
+                # Create table with pgvector extension using actual embedding dimension
+                await conn.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {table_name} (
+                        id SERIAL PRIMARY KEY,
+                        content TEXT,
+                        metadata JSONB,
+                        embedding vector({embedding_dim})
+                    )
+                """)
+                
+                # Insert documents with embeddings
+                for i, (doc, embedding) in enumerate(zip(documents, embeddings_list)):
+                    try:
+                        # Ensure embedding is a list of floats
+                        if not isinstance(embedding, list):
+                            embedding = list(embedding)
+                        
+                        # Convert embedding to string format for PostgreSQL vector
+                        embedding_str = '[' + ','.join(map(str, embedding)) + ']'
+                        
+                        # Insert with proper vector format
+                        await conn.execute(f"""
+                            INSERT INTO {table_name} (content, metadata, embedding)
+                            VALUES ($1, $2, $3::vector)
+                        """, doc.page_content, json.dumps(doc.metadata), embedding_str)
+                    except Exception as insert_error:
+                        logger.error(f"Error inserting chunk {i}: {insert_error}")
+                        logger.error(f"Embedding length: {len(embedding)}")
+                        logger.error(f"Embedding type: {type(embedding)}")
+                        logger.error(f"First few embedding values: {embedding[:5] if len(embedding) > 5 else embedding}")
+                        raise
+                
+                logger.info(f"Created vector store table {table_name} with {len(documents)} chunks")
+                
+            finally:
+                await conn.close()
             
         except Exception as e:
             logger.error(f"Error creating vector store for {table_name}: {e}")
@@ -310,9 +398,8 @@ Respond with ONLY the JSON object, no additional text."""),
             
             # Delete from vector store (drop table)
             try:
-                await self.db.execute_command(
-                    f"DROP TABLE IF EXISTS langchain_pg_embedding_{book.title.lower()}"
-                )
+                # Drop the table with the book title name
+                await self.db.execute_command(f"DROP TABLE IF EXISTS {book.title}")
             except Exception as e:
                 logger.warning(f"Failed to drop vector table for {book.title}: {e}")
             

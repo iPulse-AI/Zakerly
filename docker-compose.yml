@@ -56,13 +56,13 @@ services:
       context: .
       dockerfile: ./services/ingestion/Dockerfile
     container_name: zakerly_ingestion
+    env_file:
+      - .env
     environment:
       - DATABASE_URL=postgresql://zakerly_user:zakerly_password@postgres:5432/zakerly_db
       - REDIS_URL=redis://redis:6379
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
     ports:
-      - "8001:8000"
+      - "8002:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -79,14 +79,13 @@ services:
       context: .
       dockerfile: ./services/chat/Dockerfile
     container_name: zakerly_chat
+    env_file:
+      - .env
     environment:
       - DATABASE_URL=postgresql://zakerly_user:zakerly_password@postgres:5432/zakerly_db
       - REDIS_URL=redis://redis:6379
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-      - TAVILY_API_KEY=${TAVILY_API_KEY}
     ports:
-      - "8002:8000"
+      - "8001:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -120,7 +119,7 @@ services:
       dockerfile: Dockerfile
     container_name: zakerly_frontend
     environment:
-      - REACT_APP_API_URL=http://localhost:8000  
+      - REACT_APP_API_URL=http://localhost:3000  
     ports:
       - "3000:3000"
     depends_on:

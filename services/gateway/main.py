@@ -33,8 +33,9 @@ async def lifespan(app: FastAPI):
     redis_manager = get_redis()
     app.state.redis = redis_manager
     
-    # Initialize HTTP client
-    app.state.http_client = httpx.AsyncClient(timeout=30.0)
+    # Initialize HTTP client with longer timeout for file uploads
+    app.state.http_client = httpx.AsyncClient(timeout=300.0)  # 5 minutes timeout
+    app.state.rate_limiter = RateLimiter(app.state.redis)
     
     logger.info("API Gateway started successfully")
     
@@ -99,13 +100,11 @@ class RateLimiter:
             logger.error(f"Rate limiter error: {e}")
             return True  # Allow on error
 
-rate_limiter = RateLimiter(None)  # Will be initialized in startup
-
 async def check_rate_limit(request: Request):
     """Rate limiting dependency"""
     client_ip = request.client.host
     
-    if not await rate_limiter.is_allowed(client_ip):
+    if not await request.app.state.rate_limiter.is_allowed(client_ip):
         raise HTTPException(
             status_code=429,
             detail="Rate limit exceeded. Please try again later."
@@ -123,18 +122,18 @@ async def forward_request(
     try:
         url = f"{service_url}{endpoint}"
         
-        async with app.state.http_client as client:
-            if method == "GET":
-                response = await client.get(url, params=params)
-            elif method == "POST":
-                if files:
-                    response = await client.post(url, files=files, data=data)
-                else:
-                    response = await client.post(url, json=data)
-            elif method == "DELETE":
-                response = await client.delete(url)
+        client = app.state.http_client
+        if method == "GET":
+            response = await client.get(url, params=params)
+        elif method == "POST":
+            if files:
+                response = await client.post(url, files=files, data=data)
             else:
-                raise ValueError(f"Unsupported method: {method}")
+                response = await client.post(url, json=data)
+        elif method == "DELETE":
+            response = await client.delete(url)
+        else:
+            raise ValueError(f"Unsupported method: {method}")
         
         response.raise_for_status()
         return response.json()
@@ -152,11 +151,6 @@ async def forward_request(
             detail=f"Gateway error: {str(e)}"
         )
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize rate limiter with Redis"""
-    global rate_limiter
-    rate_limiter = RateLimiter(app.state.redis)
 
 @app.get("/health", response_model=HealthCheck)
 async def health_check():

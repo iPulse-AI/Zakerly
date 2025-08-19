@@ -113,6 +113,15 @@ class DatabaseManager:
             book_data['file_name']
         )
 
+    async def get_vector_table_name(self, collection_name: str) -> Optional[str]:
+        """Get the name of the vector table for a given collection name"""
+        query = """
+            SELECT name
+            FROM langchain_pg_collection
+            WHERE name = $1
+        """
+        return await self.fetch_val(query, collection_name)
+
     # Chat session methods
     async def create_chat_session(self, user_id: str, book_id: int, session_name: str = None) -> str:
         """Create new chat session"""

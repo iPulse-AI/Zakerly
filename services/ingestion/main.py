@@ -80,21 +80,21 @@ async def upload_book(
     ingestion_service: IngestionService = Depends(get_ingestion_service)
 ):
     """Upload and process a book file"""
+    # Record metrics
+    metrics.increment_counter("book_upload_requests", {"service": "ingestion"})
+    
+    logger.info(f"Received file upload: {file.filename}")
+    
+    # Validate file
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided")
+    
+    # Read file content
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty file")
+    
     try:
-        # Record metrics
-        metrics.increment_counter("book_upload_requests", {"service": "ingestion"})
-        
-        logger.info(f"Received file upload: {file.filename}")
-        
-        # Validate file
-        if not file.filename:
-            raise HTTPException(status_code=400, detail="No filename provided")
-        
-        # Read file content
-        content = await file.read()
-        if not content:
-            raise HTTPException(status_code=400, detail="Empty file")
-        
         # Process the book
         book = await ingestion_service.process_book(
             content=content,
@@ -107,11 +107,32 @@ async def upload_book(
         
         return book
         
-    except HTTPException:
-        raise
+    except ValueError as e:
+        error_msg = str(e)
+        logger.info(f"Caught ValueError: {error_msg}")  # Debug log
+        
+        if "already exists" in error_msg.lower():
+            metrics.increment_counter("book_upload_duplicates", {"service": "ingestion"})
+            logger.warning(f"Duplicate book upload attempt: {file.filename}")
+            raise HTTPException(
+                status_code=409, 
+                detail="This book already exists in the system. Please check your library before uploading."
+            )
+        elif "unsupported file type" in error_msg.lower():
+            metrics.increment_counter("book_upload_invalid_type", {"service": "ingestion"})
+            logger.warning(f"Unsupported file type for: {file.filename}")
+            raise HTTPException(
+                status_code=400,
+                detail="Unsupported file type. Please upload PDF, TXT, DOC, or DOCX files."
+            )
+        else:
+            metrics.increment_counter("book_upload_errors", {"service": "ingestion"})
+            logger.error(f"ValueError processing book upload: {e}")
+            raise HTTPException(status_code=400, detail=error_msg)
+            
     except Exception as e:
         metrics.increment_counter("book_upload_errors", {"service": "ingestion"})
-        logger.error(f"Error processing book upload: {e}")
+        logger.error(f"Unexpected error processing book upload (type: {type(e).__name__}): {e}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.get("/books", response_model=list[BookModel])
