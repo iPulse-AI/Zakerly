@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI):
     app.state.redis = redis_manager
     
     # Initialize HTTP client with longer timeout for file uploads
-    app.state.http_client = httpx.AsyncClient(timeout=300.0)  # 5 minutes timeout
+    app.state.http_client = httpx.AsyncClient(timeout=900.0)  # 15 minutes timeout
     app.state.rate_limiter = RateLimiter(app.state.redis)
     
     logger.info("API Gateway started successfully")

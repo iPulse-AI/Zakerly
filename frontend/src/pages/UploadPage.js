@@ -20,12 +20,13 @@ import {
   Description as FileIcon,
   CheckCircle as SuccessIcon,
   Error as ErrorIcon,
+  HourglassEmpty as ProcessingIcon,
 } from '@mui/icons-material';
 import { useDropzone } from 'react-dropzone';
 import axios from 'axios';
 
 const UploadPage = () => {
-  const [uploadStatus, setUploadStatus] = useState('idle'); // idle, uploading, success, error
+  const [uploadStatus, setUploadStatus] = useState('idle'); // idle, uploading, processing, success, error
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadedFiles, setUploadedFiles] = useState([]);
   const [errorMessage, setErrorMessage] = useState('');
@@ -63,11 +64,17 @@ const UploadPage = () => {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
+        timeout: 900000, // 15 minutes timeout
         onUploadProgress: (progressEvent) => {
           const progress = Math.round(
             (progressEvent.loaded * 100) / progressEvent.total
           );
           setUploadProgress(progress);
+          
+          // After upload completes, show processing status
+          if (progress === 100) {
+            setUploadStatus('processing');
+          }
         },
       });
 
@@ -77,13 +84,18 @@ const UploadPage = () => {
       }]);
       
       setUploadStatus('success');
-      setSuccessMessage(`Successfully uploaded "${file.name}"`);
+      setSuccessMessage(`Successfully uploaded and processed "${file.name}"`);
       
     } catch (error) {
       setUploadStatus('error');
       
       // Handle different error types
-      if (error.response?.status === 409) {
+      if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+        // Timeout error
+        setErrorMessage(
+          `Upload of "${file.name}" is taking longer than expected. The file may still be processing in the background. Please check your library in a few minutes.`
+        );
+      } else if (error.response?.status === 409) {
         // Duplicate book
         setErrorMessage(
           error.response?.data?.detail || 
@@ -98,7 +110,7 @@ const UploadPage = () => {
       } else if (error.response?.status >= 500) {
         // Server error
         setErrorMessage(
-          `Server error while processing "${file.name}". Please try again later.`
+          `Server error while processing "${file.name}". The file upload completed but processing failed. Please try again later.`
         );
       } else {
         // Generic error
@@ -117,6 +129,31 @@ const UploadPage = () => {
     { format: 'DOC', description: 'Microsoft Word (.doc)' },
     { format: 'DOCX', description: 'Microsoft Word (.docx)' },
   ];
+
+  const getStatusMessage = () => {
+    switch (uploadStatus) {
+      case 'uploading':
+        return `Uploading... ${uploadProgress}%`;
+      case 'processing':
+        return 'Processing document and creating embeddings...';
+      default:
+        return '';
+    }
+  };
+
+  const getStatusIcon = () => {
+    switch (uploadStatus) {
+      case 'uploading':
+      case 'processing':
+        return <CircularProgress size={20} />;
+      case 'success':
+        return <SuccessIcon />;
+      case 'error':
+        return <ErrorIcon />;
+      default:
+        return null;
+    }
+  };
 
   return (
     <Container maxWidth="md">
@@ -161,12 +198,25 @@ const UploadPage = () => {
         </Paper>
 
         {/* Upload Progress */}
-        {uploadStatus === 'uploading' && (
+        {(uploadStatus === 'uploading' || uploadStatus === 'processing') && (
           <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
-            <Typography variant="h6" gutterBottom>
-              Uploading... {uploadProgress}%
-            </Typography>
-            <LinearProgress variant="determinate" value={uploadProgress} />
+            <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+              {getStatusIcon()}
+              <Typography variant="h6" sx={{ ml: 1 }}>
+                {getStatusMessage()}
+              </Typography>
+            </Box>
+            {uploadStatus === 'uploading' && (
+              <LinearProgress variant="determinate" value={uploadProgress} />
+            )}
+            {uploadStatus === 'processing' && (
+              <>
+                <LinearProgress />
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                  This may take a few minutes for large documents...
+                </Typography>
+              </>
+            )}
           </Paper>
         )}
 
@@ -261,8 +311,9 @@ const UploadPage = () => {
             <ul>
               <li>Maximum file size: 50MB per file</li>
               <li>Files are automatically processed and indexed</li>
+              <li>Processing includes text extraction, AI analysis, and vector embedding creation</li>
+              <li>Large files may take several minutes to process completely</li>
               <li>Duplicate files (same content) will be detected and rejected</li>
-              <li>Processing time depends on file size and complexity</li>
               <li>All uploaded content is encrypted and secure</li>
             </ul>
           </Typography>

@@ -72,7 +72,16 @@ class DatabaseManager:
     async def get_books_by_category(self, category_id: int) -> List[Dict[str, Any]]:
         """Get books by category"""
         query = """
-            SELECT b.id, b.title, b.author, b.publication_year, b.file_name, c.name as category_name
+            SELECT 
+                b.id,
+                b.category_id,
+                b.title,
+                b.author,
+                b.publication_year,
+                b.file_hash,
+                b.file_name,
+                b.created_at,
+                c.name as category_name
             FROM books b
             JOIN category c ON b.category_id = c.id
             WHERE b.category_id = $1

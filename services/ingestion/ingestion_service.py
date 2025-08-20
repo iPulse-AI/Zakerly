@@ -32,13 +32,13 @@ class IngestionService:
         
         # Initialize LangChain components
         self.embeddings = OllamaEmbeddings(
-            model='nomic-embed-text:latest',
+            model=os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text:latest"),
             base_url=os.getenv("OLLAMA_BASE_URL")
         )
         
         self.llm = ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash",
-            temperature=0,
+            model=os.getenv("INGESTION_MODEL_NAME", "gemini-1.5-flash"),
+            temperature=float(os.getenv("INGESTION_MODEL_TEMPERATURE", "0")),
             google_api_key=os.getenv("GOOGLE_API_KEY")
         )
         
@@ -95,7 +95,7 @@ Respond with ONLY the JSON object, no additional text."""),
             # Extract metadata using LLM
             metadata = await self._extract_metadata(text_content, file_hash, filename)
             
-            # Insert book into database
+            # Insert book into database first - this is the critical operation
             book_id = await self.db.insert_book({
                 'category_id': metadata.category_id,
                 'title': metadata.title,
@@ -105,10 +105,7 @@ Respond with ONLY the JSON object, no additional text."""),
                 'file_name': metadata.file_name
             })
             
-            # Create vector store for the book
-            await self._create_vector_store(text_content, metadata.title)
-            
-            # Create and return book model
+            # Create book model - book is successfully saved at this point
             book = BookModel(
                 id=book_id,
                 category_id=metadata.category_id,
@@ -120,8 +117,20 @@ Respond with ONLY the JSON object, no additional text."""),
                 created_at=datetime.utcnow()
             )
             
-            # Cache the book data
-            await self._cache_book(book)
+            # Try to create vector store - if this fails, we still return success
+            try:
+                await self._create_vector_store(text_content, metadata.title)
+                logger.info(f"Successfully created vector store for: {metadata.title}")
+            except Exception as vector_error:
+                logger.error(f"Failed to create vector store for {metadata.title}: {vector_error}")
+                logger.warning(f"Book {metadata.title} was saved to database but vector store creation failed")
+                # Don't raise the error - the book is still successfully added
+            
+            # Try to cache the book data - if this fails, we still return success
+            try:
+                await self._cache_book(book)
+            except Exception as cache_error:
+                logger.warning(f"Failed to cache book data for {metadata.title}: {cache_error}")
             
             logger.info(f"Successfully processed book: {metadata.title}")
             return book
@@ -150,11 +159,14 @@ Respond with ONLY the JSON object, no additional text."""),
                     text = "\n".join([doc.page_content for doc in documents])
                     
             elif mime_type == "text/plain":
-                text = content.decode('utf-8')
+                text = content.decode('utf-8', errors='replace')
                 
             else:
                 # For other formats, try to decode as text
-                text = content.decode('utf-8', errors='ignore')
+                text = content.decode('utf-8', errors='replace')
+            
+            # Clean the text to remove null bytes and other problematic characters
+            text = self._clean_text_for_database(text)
             
             # Return full text for processing, but log length
             logger.info(f"Extracted text length: {len(text)} characters")
@@ -163,6 +175,23 @@ Respond with ONLY the JSON object, no additional text."""),
         except Exception as e:
             logger.error(f"Error extracting text from {filename}: {e}")
             raise ValueError(f"Failed to extract text from file: {e}")
+
+    def _clean_text_for_database(self, text: str) -> str:
+        """Clean text to remove characters that cause database encoding issues"""
+        # Remove null bytes and other control characters that cause UTF-8 issues
+        text = text.replace('\x00', '')  # Remove null bytes
+        text = text.replace('\ufffd', '')  # Remove replacement characters
+        
+        # Remove other problematic control characters (except common ones like \n, \t, \r)
+        import re
+        # Keep only printable characters, newlines, tabs, and carriage returns
+        text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', text)
+        
+        # Normalize whitespace
+        text = re.sub(r'\s+', ' ', text)
+        text = text.strip()
+        
+        return text
 
     async def _extract_metadata(self, text: str, file_hash: str, filename: str) -> BookMetadata:
         """Extract metadata using LLM"""
@@ -288,6 +317,9 @@ Respond with ONLY the JSON object, no additional text."""),
                 # Insert documents with embeddings
                 for i, (doc, embedding) in enumerate(zip(documents, embeddings_list)):
                     try:
+                        # Clean the document content before inserting
+                        clean_content = self._clean_text_for_database(doc.page_content)
+                        
                         # Ensure embedding is a list of floats
                         if not isinstance(embedding, list):
                             embedding = list(embedding)
@@ -299,12 +331,14 @@ Respond with ONLY the JSON object, no additional text."""),
                         await conn.execute(f"""
                             INSERT INTO {table_name} (content, metadata, embedding)
                             VALUES ($1, $2, $3::vector)
-                        """, doc.page_content, json.dumps(doc.metadata), embedding_str)
+                        """, clean_content, json.dumps(doc.metadata), embedding_str)
                     except Exception as insert_error:
                         logger.error(f"Error inserting chunk {i}: {insert_error}")
                         logger.error(f"Embedding length: {len(embedding)}")
                         logger.error(f"Embedding type: {type(embedding)}")
                         logger.error(f"First few embedding values: {embedding[:5] if len(embedding) > 5 else embedding}")
+                        logger.error(f"Content length: {len(clean_content)}")
+                        logger.error(f"Content preview: {clean_content[:100]}...")
                         raise
                 
                 logger.info(f"Created vector store table {table_name} with {len(documents)} chunks")

@@ -11,7 +11,8 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain.agents import create_tool_calling_agent, AgentExecutor
-from langchain_core.tools import Tool
+from langchain_core.tools import Tool, StructuredTool
+from pydantic import BaseModel, Field
 import httpx
 
 import sys
@@ -23,8 +24,13 @@ from models import (
 )
 from database import DatabaseManager
 from utils import RedisManager, generate_session_id
+from memory import PostgreSQLAgentMemory, MemoryManager
 
 logger = logging.getLogger(__name__)
+
+class SearchInput(BaseModel):
+    """Input schema for knowledge base search tool"""
+    query: str = Field(description="Search query to find relevant information in the knowledge base")
 
 class ChatService:
     def __init__(self, db_manager: DatabaseManager, redis_manager: RedisManager):
@@ -33,17 +39,20 @@ class ChatService:
         
         # Initialize LangChain components
         self.embeddings = OllamaEmbeddings(
-            model='nomic-embed-text:latest',
+            model=os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text:latest"),
             base_url=os.getenv("OLLAMA_BASE_URL")
         )
         
         self.llm = ChatGoogleGenerativeAI(
-            model="gemini-pro",
-            temperature=0.7,
+            model=os.getenv("CHAT_MODEL_NAME", "gemini-1.5-flash"),
+            temperature=float(os.getenv("CHAT_MODEL_TEMPERATURE", "0.7")),
             google_api_key=os.getenv("GOOGLE_API_KEY")
         )
         
         self.connection_string = os.getenv("DATABASE_URL")
+        
+        # Initialize memory manager
+        self.memory_manager = MemoryManager(db_manager)
         
         # Initialize prompts
         self._setup_prompts()
@@ -92,7 +101,8 @@ Based on your evaluation:
 **STEP 4: FINAL ANSWER & CITATION**
 After gathering information, provide the final, comprehensive answer. Your final answer must end with a citation: `(Source: Internal Knowledge Base)` or `(Source: Web Search)`."""),
             MessagesPlaceholder(variable_name="chat_history"),
-            ("human", "book_title: {book_title}\nmessage: {user_message}")
+            ("human", "book_title: {book_title}\nmessage: {user_message}"),
+            MessagesPlaceholder(variable_name="agent_scratchpad")
         ])
         
         # Question generation prompts
@@ -194,7 +204,7 @@ Your primary goal is to act as an expert educator, transforming raw information 
             
             return ChatResponse(
                 response=response_text,
-                session_id=session['id'],
+                session_id=str(session['id']),
                 intent=intent,
                 metadata={"book_title": request.book_title}
             )
@@ -221,18 +231,31 @@ Your primary goal is to act as an expert educator, transforming raw information 
             return {"intent": "answer_question", "book_title": book_title, "user_message": user_message}
 
     async def _handle_question_answering(self, request: ChatRequest, session: Dict[str, Any]) -> str:
-        """Handle question answering with memory"""
+        """Handle question answering with sophisticated memory"""
         try:
-            # Get chat history for context
-            history = await self.db.get_chat_history(session['id'], limit=10)
+            # Get memory instance for this session
+            memory = self.memory_manager.get_memory(
+                session_id=str(session['id']),
+                max_conversation_length=20,
+                summary_threshold=50,
+                entity_extraction_enabled=True,
+                memory_ttl_hours=24 * 7  # 7 days
+            )
             
-            # Convert history to LangChain format
-            chat_history = []
-            for msg in history:
-                if msg['message_type'] == 'user':
-                    chat_history.append(HumanMessage(content=msg['content']))
-                else:
-                    chat_history.append(AIMessage(content=msg['content']))
+            # Load memory variables
+            memory_vars = await memory._load_memory_variables_async({})
+            
+            # Get conversation history from memory
+            chat_history = memory_vars.get("history", [])
+            
+            # Get entities and summary for context
+            entities = memory_vars.get("entities", {})
+            summary = memory_vars.get("summary", "")
+            context = memory_vars.get("context", {})
+            
+            # Save current context
+            await memory.save_context_data("current_book", request.book_title)
+            await memory.save_context_data("last_query", request.user_message)
             
             # Create tools
             tools = [
@@ -240,16 +263,66 @@ Your primary goal is to act as an expert educator, transforming raw information 
                 self._create_web_search_tool()
             ]
             
-            # Create agent
-            agent = create_tool_calling_agent(self.llm, tools, self.answering_prompt)
-            agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
+            # Enhanced prompt with memory context
+            enhanced_prompt = ChatPromptTemplate.from_messages([
+                ("system", """You are a helpful and knowledgeable research assistant. Your primary goal is to answer the user's question accurately and comprehensively by following a strict, logical process.
+
+You have access to two tools:
+1. `search_internal_knowledge_base`: A specialized database of textbooks on academic subjects.
+2. `web_search`: A general-purpose internet search engine.
+
+MEMORY CONTEXT:
+- Conversation Summary: {summary}
+- Important Entities: {entities}
+- Previous Context: {context}
+
+Use this memory context to provide more personalized and contextual responses. Reference previous discussions when relevant.
+
+To answer the user's question, you MUST follow this reasoning process:
+
+**STEP 1: INTERNAL SEARCH**
+First, you MUST use the `search_internal_knowledge_base` tool. Formulate a concise query based on the user's question and memory context.
+
+**STEP 2: CRITICAL EVALUATION**
+After the `search_internal_knowledge_base` tool runs, you MUST critically evaluate the text it returns. State your evaluation clearly: "Does this retrieved text contain a direct and sufficient answer to the user's original question?"
+
+**STEP 3: FORCED DECISION & ACTION**
+Based on your evaluation:
+- **If your evaluation is YES**, then immediately synthesize your final answer based ONLY on that text. Your answer must start with: "Based on the internal knowledge base: ..."
+- **If your evaluation is NO**, you MUST state, "The internal knowledge base does not contain the answer. I will now search the web." and then use the `web_search` tool. After the web search, synthesize the final answer based on its results.
+
+**STEP 4: FINAL ANSWER & CITATION**
+After gathering information, provide the final, comprehensive answer. Your final answer must end with a citation: `(Source: Internal Knowledge Base)` or `(Source: Web Search)`."""),
+                MessagesPlaceholder(variable_name="chat_history"),
+                ("human", "book_title: {book_title}\nmessage: {user_message}"),
+                MessagesPlaceholder(variable_name="agent_scratchpad")
+            ])
             
-            # Execute
+            # Create agent with enhanced prompt
+            agent = create_tool_calling_agent(self.llm, tools, enhanced_prompt)
+            agent_executor = AgentExecutor(
+                agent=agent, 
+                tools=tools, 
+                verbose=True,
+                return_intermediate_steps=True
+            )
+            
+            # Execute with memory context
             result = await agent_executor.ainvoke({
                 "book_title": request.book_title,
                 "user_message": request.user_message,
-                "chat_history": chat_history
+                "chat_history": chat_history,
+                "summary": summary,
+                "entities": str(entities),
+                "context": str(context),
+                "input": request.user_message  # Required for memory
             })
+            
+            # Save the interaction to memory
+            await memory._save_context_async(
+                {"input": request.user_message},
+                {"output": result['output']}
+            )
             
             return result['output']
             
@@ -259,42 +332,162 @@ Your primary goal is to act as an expert educator, transforming raw information 
 
     def _create_knowledge_search_tool(self, book_title: str) -> Tool:
         """Create knowledge base search tool"""
+        
         def search_knowledge(query: str) -> str:
             try:
-                # Create vector store connection
-                vector_store = PGVector(
-                    connection_string=self.connection_string,
-                    collection_name=book_title.lower(),
-                    embedding_function=self.embeddings
-                )
+                # Use the full book title as table name (no sanitization)
+                table_name = book_title
                 
-                # Search for relevant documents
-                docs = vector_store.similarity_search(query, k=6)
+                logger.info(f"Searching for book '{book_title}' using table '{table_name}' with query '{query[:50]}...'")
                 
-                # Combine results
-                results = "\n\n".join([doc.page_content for doc in docs])
-                return results if results else "No relevant information found in the knowledge base."
+                # Set the current book title for context in search
+                self._current_book_title = book_title
+                
+                # Run the async search in a synchronous context
+                import asyncio
+                try:
+                    # Try to get the current event loop
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # If loop is running, we need to run in a thread
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            future = executor.submit(asyncio.run, self._search_vector_table(table_name, query, k=6))
+                            results = future.result()
+                    else:
+                        # If no loop is running, we can run directly
+                        results = loop.run_until_complete(self._search_vector_table(table_name, query, k=6))
+                except RuntimeError:
+                    # No event loop, create a new one
+                    results = asyncio.run(self._search_vector_table(table_name, query, k=6))
+                
+                if results:
+                    combined_results = "\n\n".join(results)
+                    logger.info(f"Found {len(results)} relevant chunks for query: {query[:50]}...")
+                    return combined_results
+                else:
+                    logger.warning(f"No relevant information found for query: {query[:50]}...")
+                    return f"No relevant information found in the knowledge base for '{book_title}'. The book may not have been properly ingested or the vector table may be missing. Please check if the book has been uploaded and processed correctly."
                 
             except Exception as e:
-                logger.error(f"Error searching knowledge base: {e}")
-                return "Error accessing knowledge base."
+                logger.error(f"Error searching knowledge base for '{book_title}': {e}")
+                return f"Error accessing knowledge base for '{book_title}': {str(e)}. This may indicate that the book has not been properly ingested or there's a database connectivity issue."
         
         return Tool(
             name="search_internal_knowledge_base",
-            description=f"Search in the knowledge base for the book '{book_title}' to find relevant information.",
+            description=f"Search in the knowledge base for the book '{book_title}' to find relevant information. Input should be a search query string only.",
             func=search_knowledge
         )
 
+    async def _search_vector_table(self, table_name: str, query: str, k: int = 6) -> List[str]:
+        """Search vector table directly using embeddings"""
+        try:
+            # Generate embedding for the query
+            query_embedding = await self.embeddings.aembed_query(query)
+            
+            # Convert to PostgreSQL vector format
+            embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
+            
+            # Connect to database and search
+            import asyncpg
+            conn = await asyncpg.connect(self.connection_string)
+            
+            try:
+                # Check if table exists (case-insensitive)
+                table_exists = await conn.fetchval("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE LOWER(table_name) = LOWER($1)
+                    )
+                """, table_name)
+                
+                if not table_exists:
+                    logger.error(f"Vector table '{table_name}' does not exist")
+                    # Try to find the actual table name by looking for tables with embedding column
+                    vector_tables = await conn.fetch("""
+                        SELECT DISTINCT t.table_name
+                        FROM information_schema.tables t
+                        JOIN information_schema.columns c ON t.table_name = c.table_name
+                        WHERE t.table_schema = 'public' 
+                        AND c.column_name = 'embedding'
+                        ORDER BY t.table_name
+                    """)
+                    
+                    if vector_tables:
+                        logger.info(f"Available vector tables: {[t['table_name'] for t in vector_tables]}")
+                        
+                        # Try to find a table that matches the book title pattern
+                        # Look for tables that contain key words from the original book title
+                        book_title = getattr(self, '_current_book_title', '')
+                        if book_title:
+                            # Try exact match with full title first
+                            for table in vector_tables:
+                                if table['table_name'].upper() == book_title.upper():
+                                    logger.info(f"Found exact match: {table['table_name']}")
+                                    table_name = table['table_name']
+                                    break
+                            else:
+                                # Try partial matches
+                                book_words = set(book_title.upper().split('_'))
+                                best_match = None
+                                best_score = 0
+                                
+                                for table in vector_tables:
+                                    table_words = set(table['table_name'].upper().split('_'))
+                                    common_words = book_words.intersection(table_words)
+                                    score = len(common_words)
+                                    
+                                    if score > best_score:
+                                        best_score = score
+                                        best_match = table['table_name']
+                                
+                                if best_match and best_score > 0:
+                                    logger.info(f"Using best match table: {best_match} (score: {best_score})")
+                                    table_name = best_match
+                                else:
+                                    logger.error(f"No suitable vector table found for book: {book_title}")
+                                    return []
+                        else:
+                            # If no book title context, use the first available vector table
+                            table_name = vector_tables[0]['table_name']
+                            logger.info(f"Using first available vector table: {table_name}")
+                    else:
+                        logger.error("No vector tables found in database")
+                        return []
+                
+                # Perform vector similarity search with proper table name quoting
+                rows = await conn.fetch(f"""
+                    SELECT content, embedding <-> $1::vector as distance
+                    FROM "{table_name}"
+                    ORDER BY embedding <-> $1::vector
+                    LIMIT $2
+                """, embedding_str, k)
+                
+                # Extract content from results
+                results = [row['content'] for row in rows if row['content']]
+                logger.info(f"Retrieved {len(results)} chunks from table '{table_name}'")
+                
+                return results
+                
+            finally:
+                await conn.close()
+                
+        except Exception as e:
+            logger.error(f"Error in vector search for table '{table_name}': {e}")
+            return []
+
     def _create_web_search_tool(self) -> Tool:
         """Create web search tool using Tavily"""
-        async def web_search(query: str) -> str:
+        def web_search(query: str) -> str:
             try:
                 tavily_api_key = os.getenv("TAVILY_API_KEY")
                 if not tavily_api_key:
                     return "Web search is not available - API key not configured."
                 
-                async with httpx.AsyncClient() as client:
-                    response = await client.post(
+                # Use synchronous httpx client
+                import httpx
+                with httpx.Client() as client:
+                    response = client.post(
                         "https://api.tavily.com/search",
                         headers={
                             "Authorization": f"Bearer {tavily_api_key}",
@@ -365,14 +558,14 @@ Your primary goal is to act as an expert educator, transforming raw information 
     async def _extract_topics_from_book(self, book_title: str) -> List[str]:
         """Extract topics from book using vector search"""
         try:
-            vector_store = PGVector(
-                connection_string=self.connection_string,
-                collection_name=book_title.lower(),
-                embedding_function=self.embeddings
-            )
+            # Set the current book title for context in search
+            self._current_book_title = book_title
+            
+            # Use the full book title as table name (no sanitization)
+            table_name = book_title
             
             # Search for table of contents or main topics
-            docs = vector_store.similarity_search("table of contents main topics chapters", k=5)
+            results = await self._search_vector_table(table_name, "table of contents main topics chapters", k=5)
             
             # Extract potential topics (this is a simplified approach)
             topics = ["Introduction", "Main Concepts", "Advanced Topics"]
@@ -385,15 +578,15 @@ Your primary goal is to act as an expert educator, transforming raw information 
     async def _generate_questions_for_topic(self, book_title: str, topic: str, parameters: Dict[str, Any]) -> List[Question]:
         """Generate questions for a specific topic"""
         try:
-            # Search for content related to the topic
-            vector_store = PGVector(
-                connection_string=self.connection_string,
-                collection_name=book_title.lower(),
-                embedding_function=self.embeddings
-            )
+            # Set the current book title for context in search
+            self._current_book_title = book_title
             
-            docs = vector_store.similarity_search(topic, k=8)
-            content = "\n\n".join([doc.page_content for doc in docs])
+            # Use the full book title as table name (no sanitization)
+            table_name = book_title
+            
+            # Search for content related to the topic
+            results = await self._search_vector_table(table_name, topic, k=8)
+            content = "\n\n".join(results)
             
             # Question generation prompt
             question_prompt = ChatPromptTemplate.from_messages([
@@ -404,7 +597,9 @@ Your response MUST be a JSON array of question objects. Each question object mus
 - "type": "multiple_choice_single_answer", "true_false", or "open_ended_question"
 - "question_text": The full text of the question
 - "options": Array of choices (empty array for open_ended_question)
-- "answer": The correct answer
+- "answer": The correct answer as a STRING (for true/false questions use "True" or "False", not boolean values)
+
+IMPORTANT: The "answer" field must ALWAYS be a string, never a boolean or other data type.
 
 Generate {count} questions with varied difficulty and types. Base all questions strictly on the provided content."""),
                 ("human", "Content: {content}\nTopic: {topic}\nCount: {count}")
@@ -424,12 +619,19 @@ Generate {count} questions with varied difficulty and types. Base all questions 
             
             questions = []
             for q_data in questions_data:
+                # Convert answer to string to handle boolean values from LLM
+                answer_value = q_data.get('answer', '')
+                if isinstance(answer_value, bool):
+                    answer_str = str(answer_value)
+                else:
+                    answer_str = str(answer_value) if answer_value is not None else ''
+                
                 question = Question(
                     difficulty=q_data.get('difficulty', 'medium'),
                     type=q_data.get('type', 'multiple_choice_single_answer'),
                     question_text=q_data.get('question_text', ''),
                     options=q_data.get('options', []),
-                    answer=q_data.get('answer', '')
+                    answer=answer_str
                 )
                 questions.append(question)
             
@@ -566,6 +768,9 @@ Generate {count} questions with varied difficulty and types. Base all questions 
     async def delete_session(self, session_id: str) -> bool:
         """Delete chat session"""
         try:
+            # Clear memory for this session
+            self.memory_manager.clear_memory(session_id)
+            
             result = await self.db.execute_command(
                 "DELETE FROM chat_sessions WHERE id = $1", session_id
             )
@@ -574,3 +779,51 @@ Generate {count} questions with varied difficulty and types. Base all questions 
         except Exception as e:
             logger.error(f"Error deleting session: {e}")
             raise
+
+    # Memory management methods
+    async def get_memory_stats(self, session_id: str) -> Dict[str, Any]:
+        """Get memory statistics for a session"""
+        try:
+            memory = self.memory_manager.get_memory(session_id)
+            return await memory.get_memory_stats()
+        except Exception as e:
+            logger.error(f"Error getting memory stats: {e}")
+            return {}
+
+    async def clear_session_memory(self, session_id: str) -> bool:
+        """Clear memory for a specific session"""
+        try:
+            self.memory_manager.clear_memory(session_id)
+            return True
+        except Exception as e:
+            logger.error(f"Error clearing session memory: {e}")
+            return False
+
+    async def cleanup_expired_memories(self) -> Dict[str, Any]:
+        """Clean up expired memories across all sessions"""
+        try:
+            await self.memory_manager.cleanup_all_expired()
+            return {"status": "success", "message": "Expired memories cleaned up"}
+        except Exception as e:
+            logger.error(f"Error cleaning up expired memories: {e}")
+            return {"status": "error", "message": str(e)}
+
+    async def get_session_entities(self, session_id: str) -> Dict[str, Any]:
+        """Get extracted entities for a session"""
+        try:
+            memory = self.memory_manager.get_memory(session_id)
+            memory_vars = await memory._load_memory_variables_async({})
+            return memory_vars.get("entities", {})
+        except Exception as e:
+            logger.error(f"Error getting session entities: {e}")
+            return {}
+
+    async def get_session_summary(self, session_id: str) -> str:
+        """Get conversation summary for a session"""
+        try:
+            memory = self.memory_manager.get_memory(session_id)
+            memory_vars = await memory._load_memory_variables_async({})
+            return memory_vars.get("summary", "")
+        except Exception as e:
+            logger.error(f"Error getting session summary: {e}")
+            return ""

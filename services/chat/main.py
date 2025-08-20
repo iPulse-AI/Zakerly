@@ -239,6 +239,76 @@ async def delete_session(
         logger.error(f"Error deleting session: {e}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
+# Memory management endpoints
+@app.get("/memory/stats/{session_id}")
+async def get_memory_stats(
+    session_id: str,
+    chat_service: ChatService = Depends(get_chat_service)
+):
+    """Get memory statistics for a session"""
+    try:
+        stats = await chat_service.get_memory_stats(session_id)
+        return stats
+    except Exception as e:
+        logger.error(f"Error getting memory stats: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.get("/memory/entities/{session_id}")
+async def get_session_entities(
+    session_id: str,
+    chat_service: ChatService = Depends(get_chat_service)
+):
+    """Get extracted entities for a session"""
+    try:
+        entities = await chat_service.get_session_entities(session_id)
+        return entities
+    except Exception as e:
+        logger.error(f"Error getting session entities: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.get("/memory/summary/{session_id}")
+async def get_session_summary(
+    session_id: str,
+    chat_service: ChatService = Depends(get_chat_service)
+):
+    """Get conversation summary for a session"""
+    try:
+        summary = await chat_service.get_session_summary(session_id)
+        return summary
+    except Exception as e:
+        logger.error(f"Error getting session summary: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.delete("/memory/clear/{session_id}")
+async def clear_session_memory(
+    session_id: str,
+    chat_service: ChatService = Depends(get_chat_service)
+):
+    """Clear memory for a specific session"""
+    try:
+        success = await chat_service.clear_session_memory(session_id)
+        if success:
+            return {"message": "Session memory cleared successfully"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to clear session memory")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error clearing session memory: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.post("/memory/cleanup")
+async def cleanup_expired_memories(
+    chat_service: ChatService = Depends(get_chat_service)
+):
+    """Clean up expired memories across all sessions"""
+    try:
+        result = await chat_service.cleanup_expired_memories()
+        return result
+    except Exception as e:
+        logger.error(f"Error cleaning up expired memories: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
 @app.get("/metrics")
 async def get_metrics():
     """Get service metrics"""

@@ -14,13 +14,36 @@ def calculate_file_hash(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 def sanitize_title_for_table(title: str) -> str:
-    """Sanitize title for use as database table name"""
-    # Convert to uppercase
-    sanitized = title.upper()
-    # Replace spaces with underscores
-    sanitized = re.sub(r'\s+', '_', sanitized)
-    # Remove any characters that are not uppercase letters, numbers, or underscores
-    sanitized = re.sub(r'[^A-Z0-9_]', '', sanitized)
+    """Sanitize title for use as database table name - create short, manageable names"""
+    # Create a short hash-based table name
+    # This ensures uniqueness while keeping names short and manageable
+    
+    # Create a hash of the full title for uniqueness
+    title_hash = hashlib.md5(title.encode()).hexdigest()[:12].upper()
+    
+    # Extract first few meaningful words from title
+    words = re.findall(r'[A-Za-z]+', title.upper())
+    
+    # Take first 2-3 meaningful words (skip common words)
+    skip_words = {'THE', 'A', 'AN', 'AND', 'OR', 'BUT', 'FOR', 'OF', 'TO', 'IN', 'ON', 'AT', 'BY'}
+    meaningful_words = [word for word in words if word not in skip_words and len(word) > 2]
+    
+    # Create prefix from first 2 words or use "BOOK" as fallback
+    if len(meaningful_words) >= 2:
+        prefix = meaningful_words[0][:4] + '_' + meaningful_words[1][:4]
+    elif len(meaningful_words) >= 1:
+        prefix = meaningful_words[0][:8]
+    else:
+        prefix = 'BOOK'
+    
+    # Combine prefix with hash to ensure uniqueness and keep it short
+    # Format: PREFIX_HASH (e.g., "BIG_DATA_A1B2C3D4E5F6")
+    sanitized = f"{prefix}_{title_hash}"
+    
+    # Ensure it's within PostgreSQL limits (63 chars) and reasonable length (max 25 chars)
+    if len(sanitized) > 25:
+        sanitized = sanitized[:25]
+    
     return sanitized
 
 def extract_category_id(subject: str) -> int:

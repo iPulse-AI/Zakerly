@@ -60,6 +60,23 @@ CREATE TABLE IF NOT EXISTS chat_messages (
         REFERENCES chat_sessions(id) ON DELETE CASCADE
 );
 
+-- Create session memory table for enhanced agent memory features
+CREATE TABLE IF NOT EXISTS session_memory (
+    id SERIAL PRIMARY KEY,
+    session_id UUID NOT NULL,
+    memory_type VARCHAR(50) NOT NULL,
+    key VARCHAR(255) NOT NULL,
+    value JSONB NOT NULL,
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP,
+    UNIQUE(session_id, memory_type, key),
+    CONSTRAINT fk_session_memory
+        FOREIGN KEY (session_id)
+        REFERENCES chat_sessions(id) ON DELETE CASCADE
+);
+
 -- Create indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_books_category_id ON books(category_id);
 CREATE INDEX IF NOT EXISTS idx_books_file_hash ON books(file_hash);
@@ -67,6 +84,8 @@ CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_id ON chat_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_book_id ON chat_sessions(book_id);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON chat_messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_created_at ON chat_messages(created_at);
+CREATE INDEX IF NOT EXISTS idx_session_memory_session_type ON session_memory(session_id, memory_type);
+CREATE INDEX IF NOT EXISTS idx_session_memory_expires ON session_memory(expires_at) WHERE expires_at IS NOT NULL;
 
 -- Create function to update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -80,4 +99,9 @@ $$ language 'plpgsql';
 -- Create trigger for chat_sessions
 CREATE TRIGGER update_chat_sessions_updated_at 
     BEFORE UPDATE ON chat_sessions 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Create trigger for session_memory
+CREATE TRIGGER update_session_memory_updated_at 
+    BEFORE UPDATE ON session_memory 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
