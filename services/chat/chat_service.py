@@ -125,6 +125,7 @@ Respond with ONLY the JSON object, no additional text."""),
         ])
         
         # Lecture generation prompt
+                # Lecture generation prompt
         self.lecture_prompt = ChatPromptTemplate.from_messages([
             ("system", """You are Professor A.I., a specialized AI agent designed to generate clear, engaging, and well-structured lectures. Your entire knowledge base comes from a book that has been embedded in a vector database, which you can access exclusively through your knowledge_retriever_tool.
 
@@ -156,7 +157,9 @@ Your primary goal is to act as an expert educator, transforming raw information 
 - NEVER invent information outside of what the knowledge_retriever_tool provides
 - NEVER mention your tools or internal processes unless announcing a chosen topic
 - If no relevant information is found, inform the user politely"""),
-            ("human", "book_title: {book_title}\nmessage: {user_message}\naudience: {audience}")
+            ("human", "book_title: {book_title}\nmessage: {user_message}\naudience: {audience}"),
+            # --- THIS IS THE FIX ---
+            MessagesPlaceholder(variable_name="agent_scratchpad")
         ])
 
     async def handle_chat(self, request: ChatRequest) -> ChatResponse:
@@ -645,18 +648,24 @@ Generate {count} questions with varied difficulty and types. Base all questions 
         """Generate lecture for a book topic"""
         try:
             # Create knowledge retriever tool
+            # --- THIS IS THE FIX ---
+            # The tool name here MUST match the prompt
             knowledge_tool = self._create_knowledge_search_tool(request.book_title)
-            
+            knowledge_tool.name = "knowledge_retriever_tool" # Ensure the name matches the prompt
+
             # Create agent for lecture generation
             tools = [knowledge_tool]
             agent = create_tool_calling_agent(self.llm, tools, self.lecture_prompt)
             agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
             
-            # Generate lecture
+            # --- THIS IS THE FIX ---
+            # The agent executor expects the user's message in the "input" key.
+            # We don't need to manually provide an agent_scratchpad here; the executor handles it.
             result = await agent_executor.ainvoke({
                 "book_title": request.book_title,
-                "user_message": f"Generate a lecture about {request.topic or 'main topics'}",
-                "audience": request.audience or "university"
+                "user_message": f"Generate a lecture about {request.topic or 'the main topics'}",
+                "audience": request.audience or "university students",
+                "input": f"Generate a lecture about {request.topic or 'the main topics'}", # Pass user message to 'input' key
             })
             
             return result['output']
@@ -701,7 +710,7 @@ Generate {count} questions with varied difficulty and types. Base all questions 
                 )
                 
                 session = await self.db.get_chat_session(new_session_id)
-            
+            logger.info(f"Session ID: {session['id']}")
             return session
             
         except Exception as e:
