@@ -336,7 +336,7 @@ After gathering information, provide the final, comprehensive answer. Your final
         def search_knowledge(query: str) -> str:
             try:
                 # Use the full book title as table name (no sanitization)
-                table_name = book_title
+                table_name = book_title.lower()
                 
                 logger.info(f"Searching for book '{book_title}' using table '{table_name}' with query '{query[:50]}...'")
                 
@@ -399,7 +399,7 @@ After gathering information, provide the final, comprehensive answer. Your final
                         SELECT FROM information_schema.tables 
                         WHERE LOWER(table_name) = LOWER($1)
                     )
-                """, table_name)
+                """, table_name.lower())
                 
                 if not table_exists:
                     logger.error(f"Vector table '{table_name}' does not exist")
@@ -458,7 +458,7 @@ After gathering information, provide the final, comprehensive answer. Your final
                 # Perform vector similarity search with proper table name quoting
                 rows = await conn.fetch(f"""
                     SELECT content, embedding <-> $1::vector as distance
-                    FROM "{table_name}"
+                    FROM "{table_name.lower()}"
                     ORDER BY embedding <-> $1::vector
                     LIMIT $2
                 """, embedding_str, k)
