@@ -101,19 +101,26 @@ async def upload_book(
             filename=file.filename,
             mime_type=file.content_type or "application/octet-stream"
         )
-        
         metrics.increment_counter("book_upload_success", {"service": "ingestion"})
         logger.info(f"Successfully processed book: {book.title}")
-        
         return book
-        
+
     except ValueError as e:
         error_msg = str(e)
         logger.info(f"Caught ValueError: {error_msg}")  # Debug log
-        
+
         if "already exists" in error_msg.lower():
             metrics.increment_counter("book_upload_duplicates", {"service": "ingestion"})
             logger.warning(f"Duplicate book upload attempt: {file.filename}")
+            # Try to fetch and return the existing book instead of raising error
+            from utils import calculate_file_hash
+            file.file.seek(0)
+            content_for_hash = await file.read()
+            file_hash = calculate_file_hash(content_for_hash)
+            existing_book = await ingestion_service.get_book_by_hash(file_hash)
+            if existing_book:
+                logger.info(f"Returning existing book for duplicate upload: {existing_book.title}")
+                return existing_book
             raise HTTPException(
                 status_code=409, 
                 detail="This book already exists in the system. Please check your library before uploading."
@@ -128,11 +135,29 @@ async def upload_book(
         else:
             metrics.increment_counter("book_upload_errors", {"service": "ingestion"})
             logger.error(f"ValueError processing book upload: {e}")
+            # Try to fetch and return the book if it exists in DB
+            from utils import calculate_file_hash
+            file.file.seek(0)
+            content_for_hash = await file.read()
+            file_hash = calculate_file_hash(content_for_hash)
+            existing_book = await ingestion_service.get_book_by_hash(file_hash)
+            if existing_book:
+                logger.info(f"Returning existing book after error: {existing_book.title}")
+                return existing_book
             raise HTTPException(status_code=400, detail=error_msg)
-            
+
     except Exception as e:
         metrics.increment_counter("book_upload_errors", {"service": "ingestion"})
         logger.error(f"Unexpected error processing book upload (type: {type(e).__name__}): {e}")
+        # Try to fetch and return the book if it exists in DB
+        from utils import calculate_file_hash
+        file.file.seek(0)
+        content_for_hash = await file.read()
+        file_hash = calculate_file_hash(content_for_hash)
+        existing_book = await ingestion_service.get_book_by_hash(file_hash)
+        if existing_book:
+            logger.info(f"Returning existing book after unexpected error: {existing_book.title}")
+            return existing_book
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.get("/books", response_model=list[BookModel])

@@ -9,6 +9,8 @@ from datetime import datetime
 import logging
 from contextlib import asynccontextmanager
 import json
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+from fastapi import Response
 
 # Add shared modules to path
 sys.path.append('/app/shared')
@@ -33,8 +35,8 @@ async def lifespan(app: FastAPI):
     redis_manager = get_redis()
     app.state.redis = redis_manager
     
-    # Initialize HTTP client with longer timeout for file uploads
-    app.state.http_client = httpx.AsyncClient(timeout=900.0)  # 15 minutes timeout
+    # Increase HTTP client timeout for file uploads and long operations
+    app.state.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10000.0))  # 30 minutes timeout
     app.state.rate_limiter = RateLimiter(app.state.redis)
     
     logger.info("API Gateway started successfully")
@@ -432,21 +434,9 @@ async def delete_session(session_id: str):
 # Monitoring and Metrics
 @app.get("/api/v1/metrics")
 async def get_metrics():
-    """Get aggregated metrics from all services"""
-    try:
-        # In a real implementation, this would aggregate metrics from all services
-        # and integrate with Prometheus
-        return {
-            "gateway_metrics": "Available",
-            "services": {
-                "ingestion": f"{INGESTION_SERVICE_URL}/metrics",
-                "chat": f"{CHAT_SERVICE_URL}/metrics"
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"Error getting metrics: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    """Prometheus metrics endpoint"""
+    data = generate_latest()
+    return Response(content=data, media_type=CONTENT_TYPE_LATEST)
 
 @app.get("/api/v1/status")
 async def get_system_status():

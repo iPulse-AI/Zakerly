@@ -88,12 +88,11 @@ const UploadPage = () => {
       
     } catch (error) {
       setUploadStatus('error');
-      
       // Handle different error types
-      if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
-        // Timeout error
+      if (error.code === 'ECONNABORTED' || error.message.includes('timeout') || error.response?.status === 504) {
+        // Timeout error or gateway timeout
         setErrorMessage(
-          `Upload of "${file.name}" is taking longer than expected. The file may still be processing in the background. Please check your library in a few minutes.`
+          `Processing "${file.name}" is taking longer than expected. The file may still be processing in the background. Please check your library in a few minutes.`
         );
       } else if (error.response?.status === 409) {
         // Duplicate book
@@ -110,7 +109,7 @@ const UploadPage = () => {
       } else if (error.response?.status >= 500) {
         // Server error
         setErrorMessage(
-          `Server error while processing "${file.name}". The file upload completed but processing failed. Please try again later.`
+          `Processing "${file.name}" is taking longer than expected. The file may still be processing in the background. Please check your library in a few minutes.`
         );
       } else {
         // Generic error

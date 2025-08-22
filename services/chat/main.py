@@ -6,6 +6,8 @@ import sys
 from datetime import datetime
 import logging
 from contextlib import asynccontextmanager
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+from fastapi import Response
 
 # Add shared modules to path
 sys.path.append('/app/shared')
@@ -311,9 +313,9 @@ async def cleanup_expired_memories(
 
 @app.get("/metrics")
 async def get_metrics():
-    """Get service metrics"""
-    # This would integrate with Prometheus in a real implementation
-    return {"message": "Metrics endpoint - integrate with Prometheus"}
+    """Prometheus metrics endpoint"""
+    data = generate_latest()
+    return Response(content=data, media_type=CONTENT_TYPE_LATEST)
 
 if __name__ == "__main__":
     uvicorn.run(

@@ -422,6 +422,13 @@ Respond with ONLY the JSON object, no additional text."""),
             logger.error(f"Error getting book {book_id}: {e}")
             raise
 
+    async def get_book_by_hash(self, file_hash: str) -> Optional[BookModel]:
+        """Fetch book by file hash if already exists"""
+        book_data = await self.db.fetch_one("SELECT * FROM books WHERE file_hash = $1", file_hash)
+        if book_data:
+            return BookModel(**book_data)
+        return None
+
     async def delete_book(self, book_id: int) -> bool:
         """Delete book and its vector store"""
         try:
