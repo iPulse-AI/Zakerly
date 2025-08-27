@@ -78,15 +78,16 @@ const ChatPage = () => {
       setSelectedCategory(categoryFromUrl);
     }
 
-    // Generate or get session ID
+    // FIXED: Proper session management
     const existingSessionId = sessionStorage.getItem('chatSessionId');
     if (existingSessionId) {
+      // Try to use existing session and load its history
       setSessionId(existingSessionId);
       loadChatHistory(existingSessionId);
     } else {
-      const newSessionId = uuidv4();
-      setSessionId(newSessionId);
-      sessionStorage.setItem('chatSessionId', newSessionId);
+      // CRITICAL FIX: Start with null session_id for first message
+      // The server will create a new session and return the session_id
+      setSessionId(null);
     }
   };
 
@@ -152,11 +153,18 @@ const ChatPage = () => {
       const response = await axios.post('/api/v1/chat', {
         category: getCategoryName(selectedCategory),
         book_title: selectedBook,
-        session_id: sessionId,
+        session_id: sessionId || '', // FIX #1: Sends an empty string instead of null for new sessions
         user_message: inputMessage,
         intent: chatIntent,
       });
-
+    
+      const serverSessionId = response.data.session_id;
+      if (serverSessionId && serverSessionId !== sessionId) {
+        console.log(`Updating session_id from ${sessionId} to ${serverSessionId}`);
+        setSessionId(serverSessionId);
+        sessionStorage.setItem('chatSessionId', serverSessionId);
+      }
+    
       const botMessage = {
         id: uuidv4(),
         type: 'assistant',
@@ -164,11 +172,22 @@ const ChatPage = () => {
         timestamp: new Date(),
         intent: response.data.intent,
       };
-
+    
       setMessages(prev => [...prev, botMessage]);
-      
+    
     } catch (err) {
-      setError('Failed to send message: ' + (err.response?.data?.detail || err.message));
+      // FIX #2: Greatly improved error display
+      let errorMessage = 'Failed to send message.';
+      if (err.response?.data?.detail) {
+        if (Array.isArray(err.response.data.detail)) {
+          errorMessage += ' Details: ' + err.response.data.detail.map(d => `${d.loc[1]}: ${d.msg}`).join(', ');
+        } else {
+          errorMessage += ' ' + err.response.data.detail;
+        }
+      } else {
+        errorMessage += ' ' + err.message;
+      }
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -203,11 +222,23 @@ const ChatPage = () => {
   };
 
   const startNewSession = () => {
-    const newSessionId = uuidv4();
-    setSessionId(newSessionId);
-    sessionStorage.setItem('chatSessionId', newSessionId);
+    // CRITICAL FIX: Reset ALL state to prevent validation errors
+    // Clear the stored session ID so the next message creates a new session
+    setSessionId(null);
+    sessionStorage.removeItem('chatSessionId');
     setMessages([]);
     setError('');
+    
+    // IMPORTANT: Reset book and category selection to prevent 422 errors
+    // This forces the user to reselect, ensuring consistent state
+    setSelectedBook('');
+    setSelectedCategory('');
+    setBooks([]);
+    
+    // Reset chat intent to default
+    setChatIntent('answer_question');
+    
+    console.log('Started new chat session - all state reset, please reselect book and category');
   };
 
   return (

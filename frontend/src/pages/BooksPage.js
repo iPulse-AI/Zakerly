@@ -79,6 +79,7 @@ const BooksPage = () => {
 
   const handleStartChat = (book) => {
     // Create a new chat session for this book
+    sessionStorage.removeItem('chatSessionId');
     navigate(`/chat?book=${encodeURIComponent(book.title)}&category=${book.category_id}`);
   };
 

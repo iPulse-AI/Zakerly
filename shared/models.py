@@ -56,7 +56,7 @@ class ChatMessageModel(BaseModel):
 class ChatRequest(BaseModel):
     category: str = Field(..., description="Book category")
     book_title: str = Field(..., description="Book title")
-    session_id: str = Field(..., description="Chat session ID")
+    session_id: Optional[str] = Field(default="", description="Chat session ID - empty string for new sessions")
     user_message: str = Field(..., description="User's message")
     intent: Optional[str] = Field(default="answer_question", description="Chat intent")
 

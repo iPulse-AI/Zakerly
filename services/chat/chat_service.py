@@ -15,6 +15,10 @@ from langchain_core.tools import Tool, StructuredTool
 from pydantic import BaseModel, Field
 import httpx
 
+# Import LangChain memory like in chat.py
+from langchain.memory import ConversationBufferMemory
+from langchain.schema.messages import HumanMessage, AIMessage
+
 import sys
 sys.path.append('/app/shared')
 
@@ -24,7 +28,7 @@ from models import (
 )
 from database import DatabaseManager
 from utils import RedisManager, generate_session_id
-from memory import PostgreSQLAgentMemory, MemoryManager
+from memory import SimpleMemoryManager
 
 logger = logging.getLogger(__name__)
 
@@ -51,8 +55,11 @@ class ChatService:
         
         self.connection_string = os.getenv("DATABASE_URL")
         
-        # Initialize memory manager
-        self.memory_manager = MemoryManager(db_manager)
+        # Initialize memory manager (keep for compatibility)
+        self.memory_manager = SimpleMemoryManager(db_manager)
+        
+        # Initialize session-based memory storage like in chat.py
+        self.chat_histories = {}
         
         # Initialize prompts
         self._setup_prompts()
@@ -79,27 +86,72 @@ Respond with ONLY the JSON object, no additional text."""),
         
         # Answering agent prompt
         self.answering_prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a helpful and knowledgeable research assistant. Your primary goal is to answer the user's question accurately and comprehensively by following a strict, logical process.
+            ("system", """You are an expert educational assistant and research specialist with deep knowledge across academic subjects. Your mission is to provide comprehensive, well-structured, and educational responses that help users truly understand the topics they're asking about.
 
-You have access to two tools:
-1. `search_internal_knowledge_base`: A specialized database of textbooks on academic subjects.
-2. `web_search`: A general-purpose internet search engine.
+You have access to two powerful tools:
+1. `search_internal_knowledge_base`: A specialized database of textbooks and academic materials
+2. `web_search`: A general-purpose internet search engine for additional information
 
-To answer the user's question, you MUST follow this reasoning process:
+**YOUR CORE METHODOLOGY:**
 
 **STEP 1: INTERNAL SEARCH**
-First, you MUST use the `search_internal_knowledge_base` tool. Formulate a concise query based on the user's question.
+Always begin by using the `search_internal_knowledge_base` tool with a well-crafted query based on the user's question.
 
 **STEP 2: CRITICAL EVALUATION**
-After the `search_internal_knowledge_base` tool runs, you MUST critically evaluate the text it returns. State your evaluation clearly: "Does this retrieved text contain a direct and sufficient answer to the user's original question?"
+Evaluate the retrieved information: "Does this content provide sufficient information to answer the user's question comprehensively?"
 
-**STEP 3: FORCED DECISION & ACTION**
-Based on your evaluation:
-- **If your evaluation is YES**, then immediately synthesize your final answer based ONLY on that text. Your answer must start with: "Based on the internal knowledge base: ..."
-- **If your evaluation is NO**, you MUST state, "The internal knowledge base does not contain the answer. I will now search the web." and then use the `web_search` tool. After the web search, synthesize the final answer based on its results.
+**STEP 3: INFORMATION GATHERING**
+- If internal knowledge is sufficient: Proceed with that information
+- If insufficient: Use `web_search` to supplement with additional reliable information
 
-**STEP 4: FINAL ANSWER & CITATION**
-After gathering information, provide the final, comprehensive answer. Your final answer must end with a citation: `(Source: Internal Knowledge Base)` or `(Source: Web Search)`."""),
+**STEP 4: COMPREHENSIVE RESPONSE STRUCTURE**
+Provide your answer using this enhanced structure:
+
+🎯 **DIRECT ANSWER**
+Start with a clear, direct answer to the user's specific question.
+
+📚 **DETAILED EXPLANATION**
+Provide a thorough explanation that includes:
+- Core concepts and principles
+- How things work or why they happen
+- Context and background information
+- Step-by-step processes when applicable
+
+🔑 **KEY TERMS & DEFINITIONS**
+Define important terms, concepts, or terminology mentioned in your response. Format as:
+- **Term**: Clear, concise definition
+- **Another Term**: Definition with context
+
+⚖️ **COMPARISONS & CONTRASTS** (when relevant)
+Compare different approaches, methods, theories, or concepts:
+- Similarities and differences
+- Advantages and disadvantages
+- When to use each approach
+
+💡 **PRACTICAL APPLICATIONS & EXAMPLES**
+Provide real-world examples, use cases, or applications that illustrate the concepts.
+
+🔗 **CONNECTIONS & RELATIONSHIPS**
+Explain how this topic relates to other concepts, subjects, or areas of study.
+
+⚠️ **IMPORTANT CONSIDERATIONS**
+Highlight any:
+- Common misconceptions
+- Limitations or exceptions
+- Critical points to remember
+- Potential pitfalls or challenges
+
+**RESPONSE GUIDELINES:**
+- Use clear, accessible language while maintaining academic rigor
+- Include specific examples and analogies when helpful
+- Structure information logically with smooth transitions
+- Adapt complexity to the user's apparent level of understanding
+- Be thorough but concise - avoid unnecessary verbosity
+- Use formatting (bullet points, numbered lists) to enhance readability
+- Always maintain accuracy and cite your sources
+
+**CITATION REQUIREMENT:**
+End your response with: `(Source: Internal Knowledge Base)` or `(Source: Web Search)` or `(Source: Internal Knowledge Base + Web Search)` if you used both."""),
             MessagesPlaceholder(variable_name="chat_history"),
             ("human", "book_title: {book_title}\nmessage: {user_message}"),
             MessagesPlaceholder(variable_name="agent_scratchpad")
@@ -125,7 +177,6 @@ Respond with ONLY the JSON object, no additional text."""),
         ])
         
         # Lecture generation prompt
-                # Lecture generation prompt
         self.lecture_prompt = ChatPromptTemplate.from_messages([
             ("system", """You are Professor A.I., a specialized AI agent designed to generate clear, engaging, and well-structured lectures. Your entire knowledge base comes from a book that has been embedded in a vector database, which you can access exclusively through your knowledge_retriever_tool.
 
@@ -158,7 +209,6 @@ Your primary goal is to act as an expert educator, transforming raw information 
 - NEVER mention your tools or internal processes unless announcing a chosen topic
 - If no relevant information is found, inform the user politely"""),
             ("human", "book_title: {book_title}\nmessage: {user_message}\naudience: {audience}"),
-            # --- THIS IS THE FIX ---
             MessagesPlaceholder(variable_name="agent_scratchpad")
         ])
 
@@ -234,31 +284,20 @@ Your primary goal is to act as an expert educator, transforming raw information 
             return {"intent": "answer_question", "book_title": book_title, "user_message": user_message}
 
     async def _handle_question_answering(self, request: ChatRequest, session: Dict[str, Any]) -> str:
-        """Handle question answering with sophisticated memory"""
+        """Handle question answering with ConversationBufferMemory like in chat.py"""
         try:
-            # Get memory instance for this session
-            memory = self.memory_manager.get_memory(
-                session_id=str(session['id']),
-                max_conversation_length=20,
-                summary_threshold=50,
-                entity_extraction_enabled=True,
-                memory_ttl_hours=24 * 7  # 7 days
-            )
+            # Get or create chat history for the session (like in chat.py)
+            session_id = str(session['id'])
+            if session_id not in self.chat_histories:
+                self.chat_histories[session_id] = ConversationBufferMemory(
+                    memory_key="chat_history", 
+                    return_messages=True
+                )
+            memory = self.chat_histories[session_id]
             
-            # Load memory variables
-            memory_vars = await memory._load_memory_variables_async({})
-            
-            # Get conversation history from memory
-            chat_history = memory_vars.get("history", [])
-            
-            # Get entities and summary for context
-            entities = memory_vars.get("entities", {})
-            summary = memory_vars.get("summary", "")
-            context = memory_vars.get("context", {})
-            
-            # Save current context
-            await memory.save_context_data("current_book", request.book_title)
-            await memory.save_context_data("last_query", request.user_message)
+            # Load existing messages from database into memory if memory is empty
+            if len(memory.chat_memory.messages) == 0:
+                await self.memory_manager.load_chat_history_to_memory(session_id, memory, limit=50)
             
             # Create tools
             tools = [
@@ -266,68 +305,109 @@ Your primary goal is to act as an expert educator, transforming raw information 
                 self._create_web_search_tool()
             ]
             
-            # Enhanced prompt with memory context
-            enhanced_prompt = ChatPromptTemplate.from_messages([
-                ("system", """You are a helpful and knowledgeable research assistant. Your primary goal is to answer the user's question accurately and comprehensively by following a strict, logical process.
+            # Create a custom prompt that includes the book_title and user_message
+            # This is needed because AgentExecutor with memory has limitations on input variables
+            custom_prompt = ChatPromptTemplate.from_messages([
+                ("system", f"""You are an expert educational assistant and research specialist with deep knowledge across academic subjects. Your mission is to provide comprehensive, well-structured, and educational responses that help users truly understand the topics they're asking about.
 
-You have access to two tools:
-1. `search_internal_knowledge_base`: A specialized database of textbooks on academic subjects.
-2. `web_search`: A general-purpose internet search engine.
+You are currently working with the book: "{request.book_title}"
 
-MEMORY CONTEXT:
-- Conversation Summary: {summary}
-- Important Entities: {entities}
-- Previous Context: {context}
+You have access to two powerful tools:
+1. `search_internal_knowledge_base`: A specialized database of textbooks and academic materials
+2. `web_search`: A general-purpose internet search engine for additional information
 
-Use this memory context to provide more personalized and contextual responses. Reference previous discussions when relevant.
-
-To answer the user's question, you MUST follow this reasoning process:
+**YOUR CORE METHODOLOGY:**
 
 **STEP 1: INTERNAL SEARCH**
-First, you MUST use the `search_internal_knowledge_base` tool. Formulate a concise query based on the user's question and memory context.
+Always begin by using the `search_internal_knowledge_base` tool with a well-crafted query based on the user's question.
 
 **STEP 2: CRITICAL EVALUATION**
-After the `search_internal_knowledge_base` tool runs, you MUST critically evaluate the text it returns. State your evaluation clearly: "Does this retrieved text contain a direct and sufficient answer to the user's original question?"
+Evaluate the retrieved information: "Does this content provide sufficient information to answer the user's question comprehensively?"
 
-**STEP 3: FORCED DECISION & ACTION**
-Based on your evaluation:
-- **If your evaluation is YES**, then immediately synthesize your final answer based ONLY on that text. Your answer must start with: "Based on the internal knowledge base: ..."
-- **If your evaluation is NO**, you MUST state, "The internal knowledge base does not contain the answer. I will now search the web." and then use the `web_search` tool. After the web search, synthesize the final answer based on its results.
+**STEP 3: INFORMATION GATHERING**
+- If internal knowledge is sufficient: Proceed with that information
+- If insufficient: Use `web_search` to supplement with additional reliable information
 
-**STEP 4: FINAL ANSWER & CITATION**
-After gathering information, provide the final, comprehensive answer. Your final answer must end with a citation: `(Source: Internal Knowledge Base)` or `(Source: Web Search)`."""),
+**STEP 4: COMPREHENSIVE RESPONSE STRUCTURE**
+Provide your answer using this enhanced structure:
+
+🎯 **DIRECT ANSWER**
+Start with a clear, direct answer to the user's specific question.
+
+📚 **DETAILED EXPLANATION**
+Provide a thorough explanation that includes:
+- Core concepts and principles
+- How things work or why they happen
+- Context and background information
+- Step-by-step processes when applicable
+
+🔑 **KEY TERMS & DEFINITIONS**
+Define important terms, concepts, or terminology mentioned in your response. Format as:
+- **Term**: Clear, concise definition
+- **Another Term**: Definition with context
+
+⚖️ **COMPARISONS & CONTRASTS** (when relevant)
+Compare different approaches, methods, theories, or concepts:
+- Similarities and differences
+- Advantages and disadvantages
+- When to use each approach
+
+💡 **PRACTICAL APPLICATIONS & EXAMPLES**
+Provide real-world examples, use cases, or applications that illustrate the concepts.
+
+🔗 **CONNECTIONS & RELATIONSHIPS**
+Explain how this topic relates to other concepts, subjects, or areas of study.
+
+⚠️ **IMPORTANT CONSIDERATIONS**
+Highlight any:
+- Common misconceptions
+- Limitations or exceptions
+- Critical points to remember
+- Potential pitfalls or challenges
+
+**RESPONSE GUIDELINES:**
+- Use clear, accessible language while maintaining academic rigor
+- Include specific examples and analogies when helpful
+- Structure information logically with smooth transitions
+- Adapt complexity to the user's apparent level of understanding
+- Be thorough but concise - avoid unnecessary verbosity
+- Use formatting (bullet points, numbered lists) to enhance readability
+- Always maintain accuracy and cite your sources
+
+**CITATION REQUIREMENT:**
+End your response with: `(Source: Internal Knowledge Base)` or `(Source: Web Search)` or `(Source: Internal Knowledge Base + Web Search)` if you used both."""),
                 MessagesPlaceholder(variable_name="chat_history"),
-                ("human", "book_title: {book_title}\nmessage: {user_message}"),
+                ("human", "{input}"),
                 MessagesPlaceholder(variable_name="agent_scratchpad")
             ])
             
-            # Create agent with enhanced prompt
-            agent = create_tool_calling_agent(self.llm, tools, enhanced_prompt)
+            # Use the custom prompt with embedded book title
+            agent = create_tool_calling_agent(self.llm, tools, custom_prompt)
             agent_executor = AgentExecutor(
                 agent=agent, 
                 tools=tools, 
-                verbose=True,
-                return_intermediate_steps=True
+                memory=memory,  # Pass memory to agent executor like in chat.py
+                verbose=True
             )
             
-            # Execute with memory context
+            # Execute with memory - only pass input as required by AgentExecutor
             result = await agent_executor.ainvoke({
-                "book_title": request.book_title,
-                "user_message": request.user_message,
-                "chat_history": chat_history,
-                "summary": summary,
-                "entities": str(entities),
-                "context": str(context),
-                "input": request.user_message  # Required for memory
+                "input": request.user_message
             })
             
-            # Save the interaction to memory
-            await memory._save_context_async(
-                {"input": request.user_message},
-                {"output": result['output']}
+            # Extract the agent's response
+            agent_response = result['output']
+            
+            # IMPROVED FIX: Use the standard memory.save_context() method (best practice)
+            # This ensures immediate context retention for the next turn
+            memory.save_context(
+                inputs={"input": request.user_message},
+                outputs={"output": agent_response}
             )
             
-            return result['output']
+            logger.info(f"Saved conversation turn to memory using save_context(). Total messages in memory: {len(memory.chat_memory.messages)}")
+            
+            return agent_response
             
         except Exception as e:
             logger.error(f"Error in question answering: {e}")
@@ -648,8 +728,6 @@ Generate {count} questions with varied difficulty and types. Base all questions 
         """Generate lecture for a book topic"""
         try:
             # Create knowledge retriever tool
-            # --- THIS IS THE FIX ---
-            # The tool name here MUST match the prompt
             knowledge_tool = self._create_knowledge_search_tool(request.book_title)
             knowledge_tool.name = "knowledge_retriever_tool" # Ensure the name matches the prompt
 
@@ -658,14 +736,11 @@ Generate {count} questions with varied difficulty and types. Base all questions 
             agent = create_tool_calling_agent(self.llm, tools, self.lecture_prompt)
             agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
             
-            # --- THIS IS THE FIX ---
-            # The agent executor expects the user's message in the "input" key.
-            # We don't need to manually provide an agent_scratchpad here; the executor handles it.
             result = await agent_executor.ainvoke({
                 "book_title": request.book_title,
                 "user_message": f"Generate a lecture about {request.topic or 'the main topics'}",
                 "audience": request.audience or "university students",
-                "input": f"Generate a lecture about {request.topic or 'the main topics'}", # Pass user message to 'input' key
+                "input": f"Generate a lecture about {request.topic or 'the main topics'}",
             })
             
             return result['output']
@@ -693,24 +768,41 @@ Generate {count} questions with varied difficulty and types. Base all questions 
     async def _get_or_create_session(self, session_id: str, book_title: str) -> Dict[str, Any]:
         """Get existing session or create new one"""
         try:
-            # Try to get existing session
-            session = await self.db.get_chat_session(session_id)
+            # CRITICAL FIX: Only try to get existing session if session_id is provided and not empty
+            session = None
+            if session_id and session_id.strip() and session_id != "null":
+                logger.info(f"Attempting to find existing session: {session_id}")
+                session = await self.db.get_chat_session(session_id)
+                
+                if session:
+                    logger.info(f"Found existing session: {session['id']} for book: {session.get('book_title', 'Unknown')}")
+                    return session
+                else:
+                    logger.warning(f"Session {session_id} not found in database, will create new session")
+            else:
+                logger.info(f"No valid session_id provided (got: '{session_id}'), creating new session")
             
+            # Create new session only if existing session not found or session_id is invalid
+            logger.info(f"Creating new session for book: {book_title}")
+            
+            # Get book info
+            book = await self.db.get_book_by_title(book_title)
+            if not book:
+                raise ValueError(f"Book '{book_title}' not found")
+            
+            # Create new session
+            new_session_id = await self.db.create_chat_session(
+                user_id="default_user",  # In production, get from auth
+                book_id=book['id'],
+                session_name=f"Chat about {book_title}"
+            )
+            
+            # Get the newly created session
+            session = await self.db.get_chat_session(new_session_id)
             if not session:
-                # Get book info
-                book = await self.db.get_book_by_title(book_title)
-                if not book:
-                    raise ValueError(f"Book '{book_title}' not found")
+                raise RuntimeError(f"Failed to retrieve newly created session {new_session_id}")
                 
-                # Create new session
-                new_session_id = await self.db.create_chat_session(
-                    user_id="default_user",  # In production, get from auth
-                    book_id=book['id'],
-                    session_name=f"Chat about {book_title}"
-                )
-                
-                session = await self.db.get_chat_session(new_session_id)
-            logger.info(f"Session ID: {session['id']}")
+            logger.info(f"Created new session: {session['id']} for book: {book_title}")
             return session
             
         except Exception as e:
@@ -777,8 +869,12 @@ Generate {count} questions with varied difficulty and types. Base all questions 
     async def delete_session(self, session_id: str) -> bool:
         """Delete chat session"""
         try:
-            # Clear memory for this session
-            self.memory_manager.clear_memory(session_id)
+            # Clear in-memory chat history
+            if session_id in self.chat_histories:
+                del self.chat_histories[session_id]
+            
+            # Clear database messages
+            await self.memory_manager.clear_session_history(session_id)
             
             result = await self.db.execute_command(
                 "DELETE FROM chat_sessions WHERE id = $1", session_id
@@ -793,8 +889,15 @@ Generate {count} questions with varied difficulty and types. Base all questions 
     async def get_memory_stats(self, session_id: str) -> Dict[str, Any]:
         """Get memory statistics for a session"""
         try:
-            memory = self.memory_manager.get_memory(session_id)
-            return await memory.get_memory_stats()
+            message_count = await self.memory_manager.get_message_count(session_id)
+            recent_messages = await self.memory_manager.get_recent_messages(session_id, limit=10)
+            
+            return {
+                "session_id": session_id,
+                "total_messages": message_count,
+                "recent_messages_count": len(recent_messages),
+                "memory_type": "conversation_buffer"
+            }
         except Exception as e:
             logger.error(f"Error getting memory stats: {e}")
             return {}
@@ -802,37 +905,73 @@ Generate {count} questions with varied difficulty and types. Base all questions 
     async def clear_session_memory(self, session_id: str) -> bool:
         """Clear memory for a specific session"""
         try:
-            self.memory_manager.clear_memory(session_id)
-            return True
+            # Clear in-memory chat history
+            if session_id in self.chat_histories:
+                self.chat_histories[session_id].clear()
+            
+            # Clear database messages
+            return await self.memory_manager.clear_session_history(session_id)
+            
         except Exception as e:
             logger.error(f"Error clearing session memory: {e}")
             return False
 
-    async def cleanup_expired_memories(self) -> Dict[str, Any]:
-        """Clean up expired memories across all sessions"""
+    async def get_recent_messages(self, session_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get recent messages for a session"""
         try:
-            await self.memory_manager.cleanup_all_expired()
-            return {"status": "success", "message": "Expired memories cleaned up"}
+            messages = await self.memory_manager.get_recent_messages(session_id, limit)
+            
+            # Convert to dict format
+            result = []
+            for msg in messages:
+                result.append({
+                    "type": "user" if msg.__class__.__name__ == "HumanMessage" else "assistant",
+                    "content": msg.content
+                })
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error getting recent messages: {e}")
+            return []
+
+    async def get_session_entities(self, session_id: str) -> Dict[str, Any]:
+        """Get extracted entities for a session (simplified - returns empty for compatibility)"""
+        try:
+            # Since we simplified the memory system, we don't extract entities anymore
+            # Return empty dict for API compatibility
+            return {
+                "message": "Entity extraction not available in simplified memory system",
+                "entities": {}
+            }
+        except Exception as e:
+            logger.error(f"Error getting session entities: {e}")
+            return {"entities": {}}
+
+    async def get_session_summary(self, session_id: str) -> Dict[str, Any]:
+        """Get conversation summary for a session (simplified - returns message count)"""
+        try:
+            # Since we simplified the memory system, we don't create summaries anymore
+            # Return basic info for API compatibility
+            message_count = await self.memory_manager.get_message_count(session_id)
+            return {
+                "message": "Conversation summarization not available in simplified memory system",
+                "summary": f"Session has {message_count} total messages",
+                "message_count": message_count
+            }
+        except Exception as e:
+            logger.error(f"Error getting session summary: {e}")
+            return {"summary": ""}
+
+    async def cleanup_expired_memories(self) -> Dict[str, Any]:
+        """Clean up expired memories (simplified - no complex memory to clean)"""
+        try:
+            # Since we simplified the memory system, there are no expired memories to clean
+            # Return success message for API compatibility
+            return {
+                "status": "success", 
+                "message": "No expired memories to clean in simplified memory system"
+            }
         except Exception as e:
             logger.error(f"Error cleaning up expired memories: {e}")
             return {"status": "error", "message": str(e)}
-
-    async def get_session_entities(self, session_id: str) -> Dict[str, Any]:
-        """Get extracted entities for a session"""
-        try:
-            memory = self.memory_manager.get_memory(session_id)
-            memory_vars = await memory._load_memory_variables_async({})
-            return memory_vars.get("entities", {})
-        except Exception as e:
-            logger.error(f"Error getting session entities: {e}")
-            return {}
-
-    async def get_session_summary(self, session_id: str) -> str:
-        """Get conversation summary for a session"""
-        try:
-            memory = self.memory_manager.get_memory(session_id)
-            memory_vars = await memory._load_memory_variables_async({})
-            return memory_vars.get("summary", "")
-        except Exception as e:
-            logger.error(f"Error getting session summary: {e}")
-            return ""
