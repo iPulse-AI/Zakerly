@@ -828,7 +828,15 @@ Generate {count} questions with varied difficulty and types. Base all questions 
             # Get created session
             session_data = await self.db.get_chat_session(session_id)
             
-            return ChatSessionModel(**session_data)
+            # Create response manually with string conversion
+            return ChatSessionModel(
+                id=str(session_data['id']),
+                user_id=session_data['user_id'],
+                book_id=session_data['book_id'],
+                session_name=session_data['session_name'],
+                created_at=session_data['created_at'],
+                updated_at=session_data['updated_at']
+            )
             
         except Exception as e:
             logger.error(f"Error creating session: {e}")
@@ -839,7 +847,15 @@ Generate {count} questions with varied difficulty and types. Base all questions 
         try:
             session_data = await self.db.get_chat_session(session_id)
             if session_data:
-                return ChatSessionModel(**session_data)
+                # Create response manually with string conversion
+                return ChatSessionModel(
+                    id=str(session_data['id']),
+                    user_id=session_data['user_id'],
+                    book_id=session_data['book_id'],
+                    session_name=session_data['session_name'],
+                    created_at=session_data['created_at'],
+                    updated_at=session_data['updated_at']
+                )
             return None
             
         except Exception as e:

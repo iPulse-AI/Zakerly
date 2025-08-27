@@ -129,9 +129,9 @@ async def forward_request(
             response = await client.get(url, params=params)
         elif method == "POST":
             if files:
-                response = await client.post(url, files=files, data=data)
+                response = await client.post(url, files=files, data=data, params=params)
             else:
-                response = await client.post(url, json=data)
+                response = await client.post(url, json=data, params=params)
         elif method == "DELETE":
             response = await client.delete(url)
         else:
@@ -336,17 +336,19 @@ async def generate_lecture(request: LectureRequest):
 async def create_session(user_id: str, book_title: str, session_name: str = None):
     """Create chat session"""
     try:
-        data = {
+        # Pass as query parameters to match chat service expectation
+        params = {
             "user_id": user_id,
-            "book_title": book_title,
-            "session_name": session_name
+            "book_title": book_title
         }
+        if session_name:
+            params["session_name"] = session_name
         
         result = await forward_request(
             CHAT_SERVICE_URL,
             "/sessions",
             method="POST",
-            data=data
+            params=params
         )
         
         return result
