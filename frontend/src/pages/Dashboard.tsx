@@ -277,7 +277,7 @@ export default function Dashboard() {
                       variant="outline"
                     >
                       <GraduationCap className="w-4 h-4 mr-2" />
-                      Generate Exam
+                      Create Exam
                     </Button>
                     <Button 
                       onClick={() => navigate('/chat')}

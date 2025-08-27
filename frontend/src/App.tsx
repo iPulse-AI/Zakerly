@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";
-import ExamGenerator from "./pages/ExamGenerator";
+import ExamSetup from "./pages/ExamSetup";
 import Exam from "./pages/Exam";
 import ExamView from "./pages/ExamView";
 import Chat from "./pages/Chat";
@@ -31,9 +31,10 @@ const App = () => (
           <Route path="/books" element={<Books />} />
           <Route path="/books/add" element={<AddBook />} />
           <Route path="/chat" element={<Chat />} />
-          <Route path="/exams" element={<ExamGenerator />} />
+          <Route path="/exams" element={<ExamSetup />} />
+          <Route path="/exam-setup/:bookTitle" element={<ExamSetup />} />
           <Route path="/exam" element={<Exam />} />
-          <Route path="/exams/view" element={<ExamView />} />
+          <Route path="/exam-view" element={<ExamView />} />
           <Route path="/scripts" element={<Scripts />} />
           <Route path="/features" element={<Features />} />
           <Route path="/signin" element={<SignIn />} />

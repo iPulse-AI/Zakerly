@@ -320,7 +320,7 @@ export default function Books() {
                         variant="outline" 
                         size="sm" 
                         className="flex-1"
-                        onClick={() => navigate(`/exams?book=${encodeURIComponent(book.title)}`)}
+                        onClick={() => navigate(`/exam-setup/${encodeURIComponent(book.title)}`)}
                       >
                         <GraduationCap className="w-3 h-3 mr-2" />
                         Exam

@@ -605,32 +605,45 @@ End your response with: `(Source: Internal Knowledge Base)` or `(Source: Web Sea
     async def generate_questions(self, request: QuestionGenerationRequest) -> QuestionResponse:
         """Generate questions for a book"""
         try:
-            # Analyze the request
+            # Use user-specified parameters directly
+            user_count = request.count or 10
+            user_difficulty = request.difficulty or ['medium']
+            user_question_types = request.question_types or ['multiple_choice_single_answer']
+            
+            # Analyze the request to extract topics if needed
             analysis_chain = self.analysis_prompt | self.llm | StrOutputParser()
             analysis_result = await analysis_chain.ainvoke({
                 "user_message": request.user_message
             })
             
             # Parse analysis result
-            analysis_data = json.loads(analysis_result.strip().replace('```json\n', '').replace('\n```', ''))
+            try:
+                analysis_data = json.loads(analysis_result.strip().replace('```json\n', '').replace('\n```', ''))
+                topics = analysis_data.get('topics', [])
+            except:
+                topics = []
             
-            # If no topics specified, get some from the book
-            topics = analysis_data.get('topics', [])
+            # If no topics specified, get some from the book or use general approach
             if not topics:
                 topics = await self._extract_topics_from_book(request.book_title)
             
-            # Generate questions for each topic
-            all_questions = []
-            for topic in topics[:3]:  # Limit to 3 topics
-                questions = await self._generate_questions_for_topic(
-                    request.book_title, 
-                    topic, 
-                    analysis_data.get('parameters', {})
-                )
-                all_questions.extend(questions)
+            # Generate all questions at once with user parameters
+            parameters = {
+                'count': user_count,
+                'difficulty': user_difficulty,
+                'question_types': user_question_types
+            }
+            
+            # Generate questions using the first topic or general content
+            main_topic = topics[0] if topics else "general content and main concepts"
+            all_questions = await self._generate_questions_for_topic(
+                request.book_title, 
+                main_topic, 
+                parameters
+            )
             
             return QuestionResponse(
-                chapter=", ".join(topics),
+                chapter=main_topic,
                 questions_generated=all_questions
             )
             
@@ -671,30 +684,56 @@ End your response with: `(Source: Internal Knowledge Base)` or `(Source: Web Sea
             results = await self._search_vector_table(table_name, topic, k=8)
             content = "\n\n".join(results)
             
-            # Question generation prompt
+            # Extract parameters for exam-specific generation
+            count = parameters.get('count', 2)
+            difficulty_levels = parameters.get('difficulty', ['medium'])
+            question_types = parameters.get('question_types', ['multiple_choice_single_answer'])
+            
+            # Create dynamic difficulty and type constraints
+            difficulty_constraint = f"Focus on {', '.join(difficulty_levels)} difficulty levels"
+            type_constraint = f"Generate only these question types: {', '.join(question_types)}"
+            
+            # Enhanced question generation prompt for exams
             question_prompt = ChatPromptTemplate.from_messages([
-                ("system", """You are a master educator and professional exam author. Generate high-quality questions based ONLY on the provided content.
+                ("system", """You are a master educator and professional exam author. Generate high-quality exam questions based ONLY on the provided content.
+
+EXAM SPECIFICATIONS:
+- {difficulty_constraint}
+- {type_constraint}
+- Generate exactly {count} questions
+- Distribute questions evenly across specified difficulty levels and types
 
 Your response MUST be a JSON array of question objects. Each question object must have:
-- "difficulty": "easy", "medium", or "hard"
-- "type": "multiple_choice_single_answer", "true_false", or "open_ended_question"
-- "question_text": The full text of the question
-- "options": Array of choices (empty array for open_ended_question)
-- "answer": The correct answer as a STRING (for true/false questions use "True" or "False", not boolean values)
+- "difficulty": one of "easy", "medium", or "hard" (matching the specified levels)
+- "type": one of "multiple_choice_single_answer", "true_false", or "open_ended_question" (matching specified types)
+- "question_text": The full text of the question (clear, specific, and exam-appropriate)
+- "options": Array of 4 choices for multiple choice, empty array for others
+- "answer": The correct answer as a STRING (for true/false use "True" or "False", for multiple choice use the exact option text)
 
-IMPORTANT: The "answer" field must ALWAYS be a string, never a boolean or other data type.
+EXAM QUESTION GUIDELINES:
+- Easy questions: Test basic recall and comprehension
+- Medium questions: Test understanding and application  
+- Hard questions: Test analysis, synthesis, and evaluation
+- Multiple choice: Provide 4 plausible options with only one correct answer
+- True/False: Create statements that are clearly true or false based on content
+- Open-ended: Ask for explanations, examples, or detailed analysis
 
-Generate {count} questions with varied difficulty and types. Base all questions strictly on the provided content."""),
-                ("human", "Content: {content}\nTopic: {topic}\nCount: {count}")
+IMPORTANT: 
+- The "answer" field must ALWAYS be a string
+- Base all questions strictly on the provided content
+- Make questions appropriate for formal examination
+- Ensure clear, unambiguous wording"""),
+                ("human", "Content: {content}\nTopic: {topic}\nGenerate {count} exam questions following the specifications above.")
             ])
             
-            count = parameters.get('count', 2)
             chain = question_prompt | self.llm | StrOutputParser()
             
             result = await chain.ainvoke({
                 "content": content,
                 "topic": topic,
-                "count": count
+                "count": count,
+                "difficulty_constraint": difficulty_constraint,
+                "type_constraint": type_constraint
             })
             
             # Parse questions

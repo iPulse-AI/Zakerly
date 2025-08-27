@@ -11,7 +11,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Send, BookOpen, Download, Copy, ExternalLink, Loader2, AlertCircle, ArrowLeft, Brain, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { BooksService, ChatService, SessionService, Utils } from '@/lib/services';
-import type { Book as BookType, ChatMessage, ChatSession, ChatResponse, Category } from '@/lib/types';
+import type { Book as BookType, ChatMessage, ChatSession, ChatResponse, Category, QuestionGenerationRequest } from '@/lib/types';
 
 interface Message {
   id: string;
@@ -37,6 +37,7 @@ export default function Chat() {
   const [isLoadingBooks, setIsLoadingBooks] = useState(true);
   const [error, setError] = useState('');
   const [currentSession, setCurrentSession] = useState<ChatSession | null>(null);
+  const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -146,6 +147,59 @@ export default function Chat() {
     
     // Start with a fresh session (don't load existing)
     // User can load existing session history if needed via a separate feature
+  };
+
+  const handleGenerateQuestions = async () => {
+    if (!selectedBook) {
+      setError('Please select a book first');
+      return;
+    }
+
+    setIsGeneratingQuestions(true);
+    setError('');
+
+    try {
+      const request: QuestionGenerationRequest = {
+        book_title: selectedBook,
+        user_message: 'Generate practice questions based on the book content',
+        count: 5,
+        difficulty: ['easy', 'medium', 'hard'],
+        question_types: ['multiple_choice_single_answer', 'true_false', 'open_ended_question']
+      };
+
+      const response = await ChatService.generateQuestions(request);
+      
+      // Format questions as a message
+      let questionsText = `📝 **Generated Questions for "${selectedBook}"**\n\n`;
+      response.questions_generated.forEach((q, index) => {
+        questionsText += `**Question ${index + 1}** (${q.difficulty}, ${q.type.replace(/_/g, ' ')})\n`;
+        questionsText += `${q.question_text}\n`;
+        
+        if (q.options && q.options.length > 0) {
+          q.options.forEach((option, i) => {
+            questionsText += `${String.fromCharCode(65 + i)}. ${option}\n`;
+          });
+        }
+        
+        questionsText += `*Answer: ${q.answer}*\n\n`;
+      });
+
+      // Add as a new message
+      const questionMessage: Message = {
+        id: `q${Date.now()}`,
+        type: 'assistant',
+        content: questionsText,
+        timestamp: new Date(),
+        metadata: { type: 'questions', source: 'generated' }
+      };
+
+      setMessages(prev => [...prev, questionMessage]);
+    } catch (err) {
+      console.error('Error generating questions:', err);
+      setError(err instanceof Error ? err.message : 'Failed to generate questions');
+    } finally {
+      setIsGeneratingQuestions(false);
+    }
   };
 
   const handleSendMessage = async () => {
@@ -536,6 +590,25 @@ export default function Chat() {
                     
                     {/* Input Area */}
                     <div className="border-t p-4 shrink-0">
+                      {/* Action Buttons */}
+                      {selectedBook && (
+                        <div className="flex gap-2 mb-3">
+                          <Button
+                            onClick={handleGenerateQuestions}
+                            disabled={isGeneratingQuestions || isLoading}
+                            variant="outline"
+                            size="sm"
+                          >
+                            {isGeneratingQuestions ? (
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            ) : (
+                              <Brain className="w-4 h-4 mr-2" />
+                            )}
+                            Generate Questions
+                          </Button>
+                        </div>
+                      )}
+                      
                       <div className="flex gap-3">
                         <Textarea
                           ref={textareaRef}

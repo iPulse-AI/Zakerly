@@ -8,14 +8,13 @@ import { Badge } from '@/components/ui/badge';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Clock, CheckCircle, XCircle, RotateCcw, Home } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Clock, CheckCircle, XCircle, RotateCcw, Home, Loader2, AlertCircle } from 'lucide-react';
+import { ChatService } from '@/lib/services';
+import type { Question as QuestionType, QuestionGenerationRequest } from '@/lib/types';
 
-interface Question {
+interface ExamQuestion extends QuestionType {
   id: string;
-  type: 'multiple-choice' | 'true-false' | 'short-answer' | 'essay';
-  question: string;
-  options?: string[];
-  correctAnswer?: string;
   userAnswer?: string;
   points: number;
 }
@@ -26,67 +25,113 @@ interface ExamData {
   book: string;
   difficulty: string;
   timeLimit: number;
-  questions: Question[];
+  questions: ExamQuestion[];
 }
-
-const sampleExam: ExamData = {
-  id: '1',
-  title: 'Psychology Fundamentals Quiz',
-  book: 'Introduction to Psychology',
-  difficulty: 'Medium',
-  timeLimit: 30,
-  questions: [
-    {
-      id: '1',
-      type: 'multiple-choice',
-      question: 'What is the primary focus of cognitive psychology?',
-      options: [
-        'Mental processes and thinking',
-        'Observable behaviors only',
-        'Unconscious motivations',
-        'Social interactions'
-      ],
-      correctAnswer: 'Mental processes and thinking',
-      points: 5
-    },
-    {
-      id: '2',
-      type: 'true-false',
-      question: 'Classical conditioning was first discovered by Ivan Pavlov.',
-      correctAnswer: 'true',
-      points: 3
-    },
-    {
-      id: '3',
-      type: 'short-answer',
-      question: 'Define the term "neuroplasticity" and explain its significance in psychology.',
-      correctAnswer: 'Neuroplasticity refers to the brain\'s ability to reorganize and adapt by forming new neural connections.',
-      points: 10
-    }
-  ]
-};
 
 export default function Exam() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  
+  // Get exam configuration from URL params
+  const bookTitle = searchParams.get('book');
+  const questionCount = parseInt(searchParams.get('questionCount') || '10');
+  const timeLimit = parseInt(searchParams.get('timeLimit') || '30');
+  const questionTypes = searchParams.get('questionTypes')?.split(',') || ['multiple_choice_single_answer'];
+  const difficulty = searchParams.get('difficulty')?.split(',') || ['medium'];
+
+  const [examData, setExamData] = useState<ExamData | null>(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [timeRemaining, setTimeRemaining] = useState(1800); // 30 minutes in seconds
+  const [timeRemaining, setTimeRemaining] = useState(timeLimit * 60);
   const [isCompleted, setIsCompleted] = useState(false);
   const [showResults, setShowResults] = useState(false);
+  const [isLoadingQuestions, setIsLoadingQuestions] = useState(true);
+  const [error, setError] = useState('');
 
-  const examData = sampleExam; // In real app, this would come from URL params or API
-  const currentQuestion = examData.questions[currentQuestionIndex];
-  const progress = ((currentQuestionIndex + 1) / examData.questions.length) * 100;
+  const currentQuestion = examData?.questions[currentQuestionIndex];
+  const progress = examData ? ((currentQuestionIndex + 1) / examData.questions.length) * 100 : 0;
 
+  // Generate questions on component mount
   useEffect(() => {
-    if (timeRemaining > 0 && !isCompleted) {
+    if (!bookTitle) {
+      setError('No book selected for exam');
+      setIsLoadingQuestions(false);
+      return;
+    }
+    generateExamQuestions();
+  }, [bookTitle]);
+
+  // Timer effect
+  useEffect(() => {
+    if (timeRemaining > 0 && !isCompleted && examData) {
       const timer = setTimeout(() => setTimeRemaining(timeRemaining - 1), 1000);
       return () => clearTimeout(timer);
-    } else if (timeRemaining === 0) {
+    } else if (timeRemaining === 0 && examData) {
       handleSubmitExam();
     }
-  }, [timeRemaining, isCompleted]);
+  }, [timeRemaining, isCompleted, examData]);
+
+  const generateExamQuestions = async () => {
+    if (!bookTitle) return;
+
+    try {
+      setIsLoadingQuestions(true);
+      setError('');
+
+      const request: QuestionGenerationRequest = {
+        book_title: decodeURIComponent(bookTitle),
+        user_message: `Generate ${questionCount} exam questions with various difficulty levels and types`,
+        count: questionCount,
+        difficulty: difficulty,
+        question_types: questionTypes
+      };
+
+      const response = await ChatService.generateQuestions(request);
+      
+      // Convert API questions to exam format
+      const examQuestions: ExamQuestion[] = response.questions_generated.map((q, index) => ({
+        id: `q${index + 1}`,
+        difficulty: q.difficulty,
+        type: q.type,
+        question_text: q.question_text,
+        options: q.options,
+        answer: q.answer,
+        points: getPointsForType(q.type, q.difficulty)
+      }));
+
+      const exam: ExamData = {
+        id: `exam_${Date.now()}`,
+        title: `${decodeURIComponent(bookTitle)} Exam`,
+        book: decodeURIComponent(bookTitle),
+        difficulty: difficulty.join(', '),
+        timeLimit: timeLimit,
+        questions: examQuestions
+      };
+
+      setExamData(exam);
+    } catch (err) {
+      console.error('Error generating questions:', err);
+      setError(err instanceof Error ? err.message : 'Failed to generate exam questions');
+    } finally {
+      setIsLoadingQuestions(false);
+    }
+  };
+
+  const getPointsForType = (type: string, difficulty: string): number => {
+    const basePoints = {
+      'multiple_choice_single_answer': 3,
+      'true_false': 2,
+      'open_ended_question': 5
+    };
+    
+    const multiplier = {
+      'easy': 1,
+      'medium': 1.5,
+      'hard': 2
+    };
+
+    return Math.round((basePoints[type as keyof typeof basePoints] || 3) * (multiplier[difficulty as keyof typeof multiplier] || 1));
+  };
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -95,6 +140,7 @@ export default function Exam() {
   };
 
   const handleAnswerChange = (value: string) => {
+    if (!currentQuestion) return;
     setAnswers(prev => ({
       ...prev,
       [currentQuestion.id]: value
@@ -102,6 +148,7 @@ export default function Exam() {
   };
 
   const handleNext = () => {
+    if (!examData) return;
     if (currentQuestionIndex < examData.questions.length - 1) {
       setCurrentQuestionIndex(currentQuestionIndex + 1);
     } else {
@@ -121,6 +168,8 @@ export default function Exam() {
   };
 
   const calculateScore = () => {
+    if (!examData) return { earned: 0, total: 0 };
+
     let totalPoints = 0;
     let earnedPoints = 0;
 
@@ -128,12 +177,12 @@ export default function Exam() {
       totalPoints += question.points;
       const userAnswer = answers[question.id];
       
-      if (question.type === 'multiple-choice' || question.type === 'true-false') {
-        if (userAnswer === question.correctAnswer) {
+      if (question.type === 'multiple_choice_single_answer' || question.type === 'true_false') {
+        if (userAnswer === question.answer) {
           earnedPoints += question.points;
         }
       } else {
-        // For short-answer and essay, give partial credit for demo
+        // For open-ended questions, give partial credit for demo
         if (userAnswer && userAnswer.length > 10) {
           earnedPoints += Math.floor(question.points * 0.8);
         }
@@ -146,10 +195,53 @@ export default function Exam() {
   const retryExam = () => {
     setCurrentQuestionIndex(0);
     setAnswers({});
-    setTimeRemaining(examData.timeLimit * 60);
+    setTimeRemaining(timeLimit * 60);
     setIsCompleted(false);
     setShowResults(false);
+    generateExamQuestions();
   };
+
+  // Loading state
+  if (isLoadingQuestions) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-background via-background to-accent/5">
+        <Header />
+        <div className="container mx-auto px-4 py-8">
+          <div className="max-w-4xl mx-auto">
+            <Card className="text-center">
+              <CardContent className="pt-6">
+                <Loader2 className="w-12 h-12 animate-spin mx-auto mb-4" />
+                <h2 className="text-xl font-semibold mb-2">Generating Your Exam</h2>
+                <p className="text-muted-foreground">Please wait while we create your personalized questions...</p>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (error || !examData) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-background via-background to-accent/5">
+        <Header />
+        <div className="container mx-auto px-4 py-8">
+          <div className="max-w-4xl mx-auto">
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{error || 'Failed to load exam data'}</AlertDescription>
+            </Alert>
+            <div className="text-center mt-6">
+              <Button onClick={() => navigate('/exam-setup')}>
+                Return to Exam Setup
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (showResults) {
     const score = calculateScore();
@@ -190,22 +282,22 @@ export default function Exam() {
                     <div key={question.id} className="text-left p-4 border rounded-lg">
                       <div className="flex items-start justify-between mb-2">
                         <h4 className="font-medium">Question {index + 1}</h4>
-                        <Badge variant={answers[question.id] === question.correctAnswer ? "default" : "destructive"}>
+                        <Badge variant={answers[question.id] === question.answer ? "default" : "destructive"}>
                           {question.points} pts
                         </Badge>
                       </div>
-                      <p className="mb-3 text-sm">{question.question}</p>
+                      <p className="mb-3 text-sm">{question.question_text}</p>
                       <div className="space-y-2 text-sm">
                         <div>
                           <span className="font-medium">Your answer: </span>
-                          <span className={answers[question.id] === question.correctAnswer ? "text-green-600" : "text-red-600"}>
+                          <span className={answers[question.id] === question.answer ? "text-green-600" : "text-red-600"}>
                             {answers[question.id] || "No answer provided"}
                           </span>
                         </div>
-                        {(question.type === 'multiple-choice' || question.type === 'true-false') && (
+                        {(question.type === 'multiple_choice_single_answer' || question.type === 'true_false') && (
                           <div>
                             <span className="font-medium">Correct answer: </span>
-                            <span className="text-green-600">{question.correctAnswer}</span>
+                            <span className="text-green-600">{question.answer}</span>
                           </div>
                         )}
                       </div>
@@ -266,82 +358,84 @@ export default function Exam() {
           </Card>
 
           {/* Question Card */}
-          <Card className="mb-6">
-            <CardHeader>
-              <CardTitle className="text-lg">
-                Question {currentQuestionIndex + 1}
-                <Badge variant="outline" className="ml-2">{currentQuestion.points} points</Badge>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <p className="text-lg">{currentQuestion.question}</p>
+          {currentQuestion && (
+            <Card className="mb-6">
+              <CardHeader>
+                <CardTitle className="text-lg">
+                  Question {currentQuestionIndex + 1}
+                  <Badge variant="outline" className="ml-2">{currentQuestion.points} points</Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <p className="text-lg">{currentQuestion.question_text}</p>
 
-              {/* Answer Input Based on Question Type */}
-              {currentQuestion.type === 'multiple-choice' && (
-                <RadioGroup
-                  value={answers[currentQuestion.id] || ''}
-                  onValueChange={handleAnswerChange}
-                >
-                  {currentQuestion.options?.map((option, index) => (
-                    <div key={index} className="flex items-center space-x-2">
-                      <RadioGroupItem value={option} id={`option-${index}`} />
-                      <Label htmlFor={`option-${index}`} className="cursor-pointer">
-                        {option}
-                      </Label>
+                {/* Answer Input Based on Question Type */}
+                {currentQuestion.type === 'multiple_choice_single_answer' && (
+                  <RadioGroup
+                    value={answers[currentQuestion.id] || ''}
+                    onValueChange={handleAnswerChange}
+                  >
+                    {currentQuestion.options?.map((option, index) => (
+                      <div key={index} className="flex items-center space-x-2">
+                        <RadioGroupItem value={option} id={`option-${index}`} />
+                        <Label htmlFor={`option-${index}`} className="cursor-pointer">
+                          {option}
+                        </Label>
+                      </div>
+                    ))}
+                  </RadioGroup>
+                )}
+
+                {currentQuestion.type === 'true_false' && (
+                  <RadioGroup
+                    value={answers[currentQuestion.id] || ''}
+                    onValueChange={handleAnswerChange}
+                  >
+                    <div className="flex items-center space-x-2">
+                      <RadioGroupItem value="True" id="true" />
+                      <Label htmlFor="true" className="cursor-pointer">True</Label>
                     </div>
-                  ))}
-                </RadioGroup>
-              )}
+                    <div className="flex items-center space-x-2">
+                      <RadioGroupItem value="False" id="false" />
+                      <Label htmlFor="false" className="cursor-pointer">False</Label>
+                    </div>
+                  </RadioGroup>
+                )}
 
-              {currentQuestion.type === 'true-false' && (
-                <RadioGroup
-                  value={answers[currentQuestion.id] || ''}
-                  onValueChange={handleAnswerChange}
-                >
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="true" id="true" />
-                    <Label htmlFor="true" className="cursor-pointer">True</Label>
+                {currentQuestion.type === 'open_ended_question' && (
+                  <Textarea
+                    value={answers[currentQuestion.id] || ''}
+                    onChange={(e) => handleAnswerChange(e.target.value)}
+                    placeholder="Type your answer here..."
+                    className="min-h-[120px]"
+                  />
+                )}
+
+                {/* Navigation Buttons */}
+                <div className="flex justify-between pt-4">
+                  <Button
+                    variant="outline"
+                    onClick={handlePrevious}
+                    disabled={currentQuestionIndex === 0}
+                  >
+                    Previous
+                  </Button>
+                  
+                  <div className="flex gap-2">
+                    {currentQuestionIndex === examData.questions.length - 1 ? (
+                      <Button onClick={handleSubmitExam} className="bg-green-600 hover:bg-green-700">
+                        Submit Exam
+                      </Button>
+                    ) : (
+                      <Button onClick={handleNext}>
+                        Next Question
+                      </Button>
+                    )}
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="false" id="false" />
-                    <Label htmlFor="false" className="cursor-pointer">False</Label>
-                  </div>
-                </RadioGroup>
-              )}
-
-              {(currentQuestion.type === 'short-answer' || currentQuestion.type === 'essay') && (
-                <Textarea
-                  value={answers[currentQuestion.id] || ''}
-                  onChange={(e) => handleAnswerChange(e.target.value)}
-                  placeholder="Type your answer here..."
-                  className="min-h-[120px]"
-                />
-              )}
-
-              {/* Navigation Buttons */}
-              <div className="flex justify-between pt-4">
-                <Button
-                  variant="outline"
-                  onClick={handlePrevious}
-                  disabled={currentQuestionIndex === 0}
-                >
-                  Previous
-                </Button>
-                
-                <div className="flex gap-2">
-                  {currentQuestionIndex === examData.questions.length - 1 ? (
-                    <Button onClick={handleSubmitExam} className="bg-green-600 hover:bg-green-700">
-                      Submit Exam
-                    </Button>
-                  ) : (
-                    <Button onClick={handleNext}>
-                      Next Question
-                    </Button>
-                  )}
                 </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          )}
         </div>
       </div>
     </div>
