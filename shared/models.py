@@ -80,6 +80,10 @@ class QuestionGenerationRequest(BaseModel):
     count: Optional[int] = 5
     difficulty: Optional[List[str]] = None
     question_types: Optional[List[str]] = None
+    scope_type: Optional[str] = "whole_book"  # 'whole_book' or 'specific_topics'
+    specific_topics: Optional[str] = None
+    time_limit: Optional[int] = None  # in minutes
+    category_id: Optional[str] = None
 
 class Question(BaseModel):
     difficulty: str
@@ -94,8 +98,12 @@ class QuestionResponse(BaseModel):
 
 class LectureRequest(BaseModel):
     book_title: str
-    topic: Optional[str] = None
-    audience: Optional[str] = "university"
+    user_message: str
+    category: Optional[str] = None
+    title: Optional[str] = None
+    scope: Optional[str] = "whole_book"  # 'whole_book' or 'specific_topics'
+    specific_topics: Optional[str] = None
+    detail_level: Optional[str] = "overview"  # 'overview', 'detailed', 'in-depth'
 
 class HealthCheck(BaseModel):
     status: str

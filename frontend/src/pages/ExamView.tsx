@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Header } from '@/components/ui/header';
 import { Button } from '@/components/ui/button';
@@ -38,36 +38,59 @@ export default function ExamView() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   
-  // Get exam parameters from URL
+  // Get exam parameters from URL with memoization to prevent re-renders
   const bookTitle = searchParams.get('book');
   const questionCount = parseInt(searchParams.get('questionCount') || '10');
   const timeLimit = parseInt(searchParams.get('timeLimit') || '30');
-  const difficulty = searchParams.get('difficulty') || 'medium';
-  const questionTypes = searchParams.get('questionTypes')?.split(',') || ['multiple_choice_single_answer'];
+  const scopeType = searchParams.get('scopeType') || 'whole_book';
+  const specificTopics = searchParams.get('topics') || '';
+  
+  // Memoize arrays to prevent dependency changes on every render
+  const difficulty = useMemo(() => 
+    searchParams.get('difficulty')?.split(',') || ['medium'], 
+    [searchParams.get('difficulty')]
+  );
+  
+  const questionTypes = useMemo(() => 
+    searchParams.get('questionTypes')?.split(',') || ['multiple_choice_single_answer'], 
+    [searchParams.get('questionTypes')]
+  );
 
-  useEffect(() => {
-    if (bookTitle) {
-      generateExamPreview();
-    } else {
-      setError('No book selected for exam generation');
-      setIsLoading(false);
-    }
-  }, [bookTitle, questionCount, timeLimit, difficulty, questionTypes]);
-
-  const generateExamPreview = async () => {
+  const generateExamPreview = useCallback(async () => {
     try {
       setIsLoading(true);
       setError('');
 
+      // Build comprehensive user message based on all parameters
+      let userMessage = `Generate ${questionCount} exam questions`;
+      
+      if (difficulty.length > 0) {
+        userMessage += ` with ${difficulty.join(', ')} difficulty level${difficulty.length > 1 ? 's' : ''}`;
+      }
+      
+      if (timeLimit) {
+        userMessage += ` for a ${timeLimit}-minute exam`;
+      }
+      
+      if (scopeType === 'specific_topics' && specificTopics) {
+        userMessage += ` focusing specifically on: ${specificTopics}`;
+      } else {
+        userMessage += ` covering the entire book content`;
+      }
+
       const request: QuestionGenerationRequest = {
         book_title: bookTitle!,
-        user_message: `Generate ${questionCount} exam questions with ${difficulty} difficulty`,
+        user_message: userMessage,
         count: questionCount,
-        difficulty: [difficulty],
-        question_types: questionTypes
+        difficulty: difficulty,
+        question_types: questionTypes,
+        // Additional parameters for enhanced generation
+        scope_type: scopeType as 'whole_book' | 'specific_topics',
+        specific_topics: specificTopics,
+        time_limit: timeLimit
       };
 
-      console.log('Generating exam with parameters:', request);
+      console.log('Generating exam with comprehensive parameters:', request);
       
       const response = await ChatService.generateQuestions(request);
       
@@ -89,9 +112,9 @@ export default function ExamView() {
 
       const exam: ExamData = {
         id: `exam_${Date.now()}`,
-        title: `${bookTitle} - ${difficulty.charAt(0).toUpperCase() + difficulty.slice(1)} Level Exam`,
+        title: `${bookTitle} - ${difficulty.join('/')} Level Exam`,
         book: bookTitle!,
-        difficulty: difficulty,
+        difficulty: difficulty.join(', '),
         timeLimit: timeLimit,
         totalQuestions: examQuestions.length,
         totalPoints: totalPoints,
@@ -108,7 +131,16 @@ export default function ExamView() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [bookTitle, questionCount, timeLimit, difficulty, questionTypes, scopeType, specificTopics]);
+
+  useEffect(() => {
+    if (bookTitle) {
+      generateExamPreview();
+    } else {
+      setError('No book selected for exam generation');
+      setIsLoading(false);
+    }
+  }, [bookTitle, generateExamPreview]);
 
   const getPointsForQuestionType = (type: string): number => {
     switch (type) {
@@ -145,7 +177,7 @@ export default function ExamView() {
       questionCount: examData.totalQuestions.toString(),
       timeLimit: examData.timeLimit.toString(),
       questionTypes: questionTypes.join(','),
-      difficulty: difficulty
+      difficulty: difficulty.join(',')
     });
     
     navigate(`/exam?${examParams.toString()}`);

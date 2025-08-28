@@ -61,6 +61,10 @@ export interface QuestionGenerationRequest {
   count?: number;
   difficulty?: string[];
   question_types?: string[];
+  scope_type?: 'whole_book' | 'specific_topics';
+  specific_topics?: string;
+  time_limit?: number;
+  category_id?: string;
 }
 
 export interface Question {

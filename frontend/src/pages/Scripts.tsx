@@ -1,5 +1,4 @@
-import React, { useState } from 'react';
-import TranscriptionUploader from '@/components/ui/transcription-uploader';
+import React, { useState, useEffect } from 'react';
 import { Header } from '@/components/ui/header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -7,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { BooksService, ChatService } from '@/lib/services';
 import { 
   Presentation, 
   Plus, 
@@ -14,15 +14,11 @@ import {
   Download, 
   Copy, 
   Eye,
-  Calendar,
   Clock,
-  BookOpen,
   Sparkles,
-  FileText,
   Edit,
   Trash2,
-  Upload,
-  Mic
+  Loader2
 } from 'lucide-react';
 
 interface Script {
@@ -38,66 +34,100 @@ interface Script {
   lastModified: Date;
 }
 
-const sampleScripts: Script[] = [
-  {
-    id: '1',
-    title: 'Introduction to Cognitive Psychology',
-    author: 'Dr. Sarah Johnson',
-    book: 'Introduction to Psychology',
-    topic: 'Cognitive Processes',
-    duration: 45,
-    difficulty: 'beginner',
-    content: 'Welcome to our exploration of cognitive psychology...',
-    createdDate: new Date('2024-01-15'),
-    lastModified: new Date('2024-01-16')
-  },
-  {
-    id: '2',
-    title: 'Limits and Continuity in Calculus',
-    author: 'Prof. Michael Chen',
-    book: 'Calculus: Early Transcendentals',
-    topic: 'Mathematical Foundations',
-    duration: 60,
-    difficulty: 'intermediate',
-    content: 'Today we will dive into the fundamental concepts of limits...',
-    createdDate: new Date('2024-01-12'),
-    lastModified: new Date('2024-01-14')
-  },
-  {
-    id: '3',
-    title: 'Cell Biology Fundamentals',
-    author: 'Dr. Emily Rodriguez',
-    book: 'Campbell Biology',
-    topic: 'Cellular Structure',
-    duration: 90,
-    difficulty: 'advanced',
-    content: 'Understanding cellular mechanisms is crucial for biology...',
-    createdDate: new Date('2024-01-10'),
-    lastModified: new Date('2024-01-11')
-  }
-];
+interface Category {
+  id: number;
+  name: string;
+  created_at: string;
+}
+
+interface Book {
+  id: number;
+  category_id: number;
+  title: string;
+  author?: string;
+  publication_year?: number;
+  file_hash: string;
+  file_name: string;
+  created_at: string;
+}
 
 export default function Scripts() {
-  const [scripts, setScripts] = useState<Script[]>(sampleScripts);
+  const [scripts, setScripts] = useState<Script[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterDifficulty, setFilterDifficulty] = useState('all');
   const [filterAuthor, setFilterAuthor] = useState('all');
   const [showCreateForm, setShowCreateForm] = useState(false);
-  const [showTranscriptionUploader, setShowTranscriptionUploader] = useState(false);
   const [selectedScript, setSelectedScript] = useState<Script | null>(null);
   const [editingScript, setEditingScript] = useState<Script | null>(null);
+  
+  // Database data
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [books, setBooks] = useState<Book[]>([]);
+  const [filteredBooks, setFilteredBooks] = useState<Book[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [categoriesLoading, setCategoriesLoading] = useState(true);
+  const [booksLoading, setBooksLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);
 
   const [newScript, setNewScript] = useState({
+    categoryId: '',
+    bookId: '',
     title: '',
-    author: '',
-    book: '',
-    topic: '',
-    duration: 45,
-    difficulty: 'beginner' as const,
+    scope: 'whole_book' as 'whole_book' | 'specific_topics',
+    specificTopics: '',
     detailLevel: 'overview' as 'overview' | 'detailed' | 'in-depth'
   });
 
   const authors = Array.from(new Set(scripts.map(script => script.author)));
+
+  // Fetch categories and books on component mount
+  useEffect(() => {
+    fetchCategories();
+    fetchBooks();
+  }, []);
+
+  // Filter books when category changes
+  useEffect(() => {
+    if (newScript.categoryId) {
+      const filtered = books.filter(book => book.category_id.toString() === newScript.categoryId);
+      setFilteredBooks(filtered);
+    } else {
+      setFilteredBooks(books);
+    }
+  }, [newScript.categoryId, books]);
+
+  const fetchCategories = async () => {
+    try {
+      setCategoriesLoading(true);
+      const data = await BooksService.getCategories();
+      setCategories(data);
+    } catch (error) {
+      console.error('Error fetching categories:', error);
+    } finally {
+      setCategoriesLoading(false);
+    }
+  };
+
+  const fetchBooks = async () => {
+    try {
+      setBooksLoading(true);
+      const data = await BooksService.getBooks();
+      setBooks(data);
+      setFilteredBooks(data);
+    } catch (error) {
+      console.error('Error fetching books:', error);
+    } finally {
+      setBooksLoading(false);
+    }
+  };
+
+  const getSelectedCategory = () => {
+    return categories.find(cat => cat.id.toString() === newScript.categoryId);
+  };
+
+  const getSelectedBook = () => {
+    return books.find(book => book.id.toString() === newScript.bookId);
+  };
 
   const filteredScripts = scripts.filter(script => {
     const matchesSearch = script.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -119,32 +149,103 @@ export default function Scripts() {
     }
   };
 
-  const handleCreateScript = () => {
-    // Simulate script generation
-    const script: Script = {
-      id: Date.now().toString(),
-      title: newScript.title,
-      author: newScript.author,
-      book: newScript.book,
-      topic: newScript.topic,
-      duration: newScript.duration,
-      difficulty: newScript.difficulty,
-      content: `Generated lecture script for "${newScript.title}" - ${newScript.detailLevel} level content covering ${newScript.topic}...`,
-      createdDate: new Date(),
+  const handleCreateScript = async () => {
+    setGenerating(true);
+    try {
+      const selectedCategory = getSelectedCategory();
+      const selectedBook = getSelectedBook();
+      
+      if (!selectedCategory || !selectedBook) {
+        alert('Please select both category and book');
+        return;
+      }
+
+      if (!newScript.title.trim()) {
+        alert('Please enter a lecture title');
+        return;
+      }
+
+      if (newScript.scope === 'specific_topics' && !newScript.specificTopics.trim()) {
+        alert('Please specify the topics for focused lecture');
+        return;
+      }
+
+      // Prepare the lecture request with all parameters
+      const lectureRequest = {
+        book_title: selectedBook.title,
+        user_message: `Generate a comprehensive ${newScript.detailLevel} lecture script titled "${newScript.title}" for the ${selectedCategory.name} category. ${
+          newScript.scope === 'specific_topics' 
+            ? `Focus specifically on these topics: ${newScript.specificTopics}` 
+            : 'Cover the entire book content comprehensively.'
+        }`,
+        category: selectedCategory.name,
+        title: newScript.title,
+        scope: newScript.scope,
+        specific_topics: newScript.scope === 'specific_topics' ? newScript.specificTopics : undefined,
+        detail_level: newScript.detailLevel
+      };
+
+      console.log('Generating lecture with request:', lectureRequest);
+
+      // Generate lecture using ChatService
+      const data = await ChatService.generateLecture(lectureRequest);
+      
+      // Create script with generated content
+      const script: Script = {
+        id: Date.now().toString(),
+        title: newScript.title,
+        author: 'AI Generated',
+        book: selectedBook.title,
+        topic: newScript.scope === 'specific_topics' ? newScript.specificTopics : 'Whole Book',
+        duration: newScript.detailLevel === 'overview' ? 30 : newScript.detailLevel === 'detailed' ? 60 : 90,
+        difficulty: newScript.detailLevel === 'overview' ? 'beginner' : newScript.detailLevel === 'detailed' ? 'intermediate' : 'advanced',
+        content: data.lecture || 'Generated lecture content...',
+        createdDate: new Date(),
+        lastModified: new Date()
+      };
+      
+      setScripts([script, ...scripts]);
+      setShowCreateForm(false);
+      setNewScript({
+        categoryId: '',
+        bookId: '',
+        title: '',
+        scope: 'whole_book',
+        specificTopics: '',
+        detailLevel: 'overview'
+      });
+
+      // Show success message
+      alert('Lecture script generated successfully!');
+      
+    } catch (error) {
+      console.error('Error generating lecture:', error);
+      alert('Failed to generate lecture. Please try again.');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleEditScript = (script: Script) => {
+    setEditingScript(script);
+  };
+
+  const handleSaveEdit = () => {
+    if (!editingScript) return;
+    
+    const updatedScript = {
+      ...editingScript,
       lastModified: new Date()
     };
     
-    setScripts([script, ...scripts]);
-    setShowCreateForm(false);
-    setNewScript({
-      title: '',
-      author: '',
-      book: '',
-      topic: '',
-      duration: 45,
-      difficulty: 'beginner',
-      detailLevel: 'overview'
-    });
+    setScripts(scripts.map(script => 
+      script.id === editingScript.id ? updatedScript : script
+    ));
+    setEditingScript(null);
+  };
+
+  const handleDeleteScript = (id: string) => {
+    setScripts(scripts.filter(script => script.id !== id));
   };
 
   const copyToClipboard = (content: string) => {
@@ -158,46 +259,6 @@ export default function Scripts() {
     a.href = url;
     a.download = `${script.title}.txt`;
     a.click();
-  };
-
-  const handleTranscriptionComplete = (transcription: string, metadata: { fileName: string; duration?: number; fileType: string; author?: string }) => {
-    const script: Script = {
-      id: Date.now().toString(),
-      title: metadata.fileName.replace(/\.[^/.]+$/, ''), // Remove file extension
-      author: metadata.author || 'Unknown', // Use provided author or default
-      book: 'Transcribed Media',
-      topic: 'Audio/Video Transcription',
-      duration: metadata.duration ? Math.ceil(metadata.duration / 60) : 30, // Convert to minutes
-      difficulty: 'beginner',
-      content: transcription,
-      createdDate: new Date(),
-      lastModified: new Date()
-    };
-    
-    setScripts([script, ...scripts]);
-    setShowTranscriptionUploader(false);
-  };
-
-  const handleEditScript = (script: Script) => {
-    setEditingScript(script);
-  };
-
-  const handleUpdateScript = () => {
-    if (!editingScript) return;
-    
-    const updatedScript = {
-      ...editingScript,
-      lastModified: new Date()
-    };
-    
-    setScripts(scripts.map(s => s.id === editingScript.id ? updatedScript : s));
-    setEditingScript(null);
-  };
-
-  const handleDeleteScript = (scriptId: string) => {
-    if (confirm('Are you sure you want to delete this script?')) {
-      setScripts(scripts.filter(s => s.id !== scriptId));
-    }
   };
 
   if (selectedScript) {
@@ -290,6 +351,54 @@ export default function Scripts() {
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="space-y-2">
+                  <label className="text-sm font-medium">Category</label>
+                  <Select
+                    value={newScript.categoryId}
+                    onValueChange={(value) => setNewScript({...newScript, categoryId: value, bookId: ''})}
+                    disabled={categoriesLoading}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={categoriesLoading ? "Loading categories..." : "Select a category..."} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {categories.map((category) => (
+                        <SelectItem key={category.id} value={category.id.toString()}>
+                          {category.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Book</label>
+                  <Select
+                    value={newScript.bookId}
+                    onValueChange={(value) => setNewScript({...newScript, bookId: value})}
+                    disabled={!newScript.categoryId || booksLoading || filteredBooks.length === 0}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={
+                        !newScript.categoryId 
+                          ? "Select a category first..." 
+                          : booksLoading 
+                            ? "Loading books..."
+                            : filteredBooks.length === 0 
+                              ? "No books available in this category"
+                              : "Select a book..."
+                      } />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {filteredBooks.map((book) => (
+                        <SelectItem key={book.id} value={book.id.toString()}>
+                          {book.title} {book.author && `by ${book.author}`}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
                   <label className="text-sm font-medium">Title</label>
                   <Input
                     value={newScript.title}
@@ -299,76 +408,38 @@ export default function Scripts() {
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">Author</label>
-                  <Input
-                    value={newScript.author}
-                    onChange={(e) => setNewScript({...newScript, author: e.target.value})}
-                    placeholder="Enter author name..."
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Book/Source</label>
+                  <label className="text-sm font-medium">Scope</label>
                   <Select
-                    value={newScript.book}
-                    onValueChange={(value) => setNewScript({...newScript, book: value})}
+                    value={newScript.scope}
+                    onValueChange={(value) => setNewScript({...newScript, scope: value as 'whole_book' | 'specific_topics'})}
                   >
                     <SelectTrigger>
-                      <SelectValue placeholder="Select a book..." />
+                      <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Introduction to Psychology">Introduction to Psychology</SelectItem>
-                      <SelectItem value="Calculus: Early Transcendentals">Calculus: Early Transcendentals</SelectItem>
-                      <SelectItem value="Campbell Biology">Campbell Biology</SelectItem>
-                      <SelectItem value="General Chemistry">General Chemistry</SelectItem>
+                      <SelectItem value="whole_book">Whole Book</SelectItem>
+                      <SelectItem value="specific_topics">Specific Topics</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Topic/Chapter</label>
-                  <Input
-                    value={newScript.topic}
-                    onChange={(e) => setNewScript({...newScript, topic: e.target.value})}
-                    placeholder="Specific topic or chapter to focus on..."
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
+                {newScript.scope === 'specific_topics' && (
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Duration (minutes)</label>
-                    <Input
-                      type="number"
-                      value={newScript.duration}
-                      onChange={(e) => setNewScript({...newScript, duration: parseInt(e.target.value) || 45})}
-                      min="15"
-                      max="180"
+                    <label className="text-sm font-medium">Specific Topics</label>
+                    <Textarea
+                      value={newScript.specificTopics}
+                      onChange={(e) => setNewScript({...newScript, specificTopics: e.target.value})}
+                      placeholder="Enter specific topics separated by commas..."
+                      rows={3}
                     />
                   </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Difficulty Level</label>
-                    <Select
-                      value={newScript.difficulty}
-                      onValueChange={(value) => setNewScript({...newScript, difficulty: value as any})}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="beginner">Beginner</SelectItem>
-                        <SelectItem value="intermediate">Intermediate</SelectItem>
-                        <SelectItem value="advanced">Advanced</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
+                )}
 
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Detail Level</label>
                   <Select
                     value={newScript.detailLevel}
-                    onValueChange={(value) => setNewScript({...newScript, detailLevel: value as any})}
+                    onValueChange={(value) => setNewScript({...newScript, detailLevel: value as 'overview' | 'detailed' | 'in-depth'})}
                   >
                     <SelectTrigger>
                       <SelectValue />
@@ -384,10 +455,14 @@ export default function Scripts() {
                 <Button 
                   onClick={handleCreateScript}
                   className="w-full bg-gradient-primary"
-                  disabled={!newScript.title || !newScript.book || !newScript.topic}
+                  disabled={!newScript.categoryId || !newScript.bookId || !newScript.title || generating}
                 >
-                  <Sparkles className="w-4 h-4 mr-2" />
-                  Generate Script
+                  {generating ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-4 h-4 mr-2" />
+                  )}
+                  {generating ? 'Generating Lecture...' : 'Generate Lecture'}
                 </Button>
               </CardContent>
             </Card>
@@ -500,7 +575,7 @@ export default function Scripts() {
 
                 <div className="flex gap-2">
                   <Button 
-                    onClick={handleUpdateScript}
+                    onClick={handleSaveEdit}
                     className="flex-1 bg-gradient-primary"
                     disabled={!editingScript.title || !editingScript.content}
                   >
@@ -516,23 +591,6 @@ export default function Scripts() {
                 </div>
               </CardContent>
             </Card>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (showTranscriptionUploader) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-background via-background to-accent/5">
-        <Header />
-        
-        <div className="container mx-auto px-4 py-8">
-          <div className="max-w-4xl mx-auto">
-            <TranscriptionUploader
-              onTranscriptionComplete={handleTranscriptionComplete}
-              onClose={() => setShowTranscriptionUploader(false)}
-            />
           </div>
         </div>
       </div>
@@ -562,14 +620,6 @@ export default function Scripts() {
               >
                 <Plus className="w-4 h-4 mr-2" />
                 Create Script
-              </Button>
-              <Button 
-                onClick={() => setShowTranscriptionUploader(true)}
-                variant="outline"
-                className="border-primary text-primary hover:bg-primary/10"
-              >
-                <Mic className="w-4 h-4 mr-2" />
-                Transcribe Media
               </Button>
             </div>
           </div>

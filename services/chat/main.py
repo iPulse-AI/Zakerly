@@ -322,6 +322,6 @@ if __name__ == "__main__":
         "main:app",
         host="0.0.0.0",
         port=8000,
-        reload=True,
+        reload=False,  # Disable reload to prevent constant restarts
         log_level="info"
     )
