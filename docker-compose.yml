@@ -132,34 +132,8 @@ services:
     networks:
       - zakerly_network
 
-  # Monitoring with Prometheus
-
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: zakerly_prometheus
-    ports:
-      - "9090:9090"  # This is a port mapping
-    volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml # This is a volume mount
-    networks:
-      - zakerly_network
-
-  # Grafana for monitoring dashboards
-  grafana:
-    image: grafana/grafana:latest
-    container_name: zakerly_grafana
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin123  #user:admin, pass:admin123
-    ports:
-      - "3001:3000"
-    volumes:
-      - grafana_data:/var/lib/grafana
-    networks:
-      - zakerly_network
-
 volumes:
   postgres_data:
-  grafana_data:
 
 networks:
   zakerly_network:

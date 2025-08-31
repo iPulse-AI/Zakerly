@@ -12,7 +12,7 @@ sys.path.append('/app/shared')
 
 from models import BookModel, BookMetadata, HealthCheck, ErrorResponse
 from database import get_database, DatabaseManager
-from utils import setup_logging, get_redis, metrics
+from utils import setup_logging, get_redis
 from ingestion_service import IngestionService
 
 # Setup logging
@@ -80,9 +80,6 @@ async def upload_book(
     ingestion_service: IngestionService = Depends(get_ingestion_service)
 ):
     """Upload and process a book file"""
-    # Record metrics
-    metrics.increment_counter("book_upload_requests", {"service": "ingestion"})
-    
     logger.info(f"Received file upload: {file.filename}")
     
     # Validate file
@@ -101,7 +98,6 @@ async def upload_book(
             filename=file.filename,
             mime_type=file.content_type or "application/octet-stream"
         )
-        metrics.increment_counter("book_upload_success", {"service": "ingestion"})
         logger.info(f"Successfully processed book: {book.title}")
         return book
 
@@ -110,7 +106,6 @@ async def upload_book(
         logger.info(f"Caught ValueError: {error_msg}")  # Debug log
 
         if "already exists" in error_msg.lower():
-            metrics.increment_counter("book_upload_duplicates", {"service": "ingestion"})
             logger.warning(f"Duplicate book upload attempt: {file.filename}")
             # Try to fetch and return the existing book instead of raising error
             from utils import calculate_file_hash
@@ -126,14 +121,12 @@ async def upload_book(
                 detail="This book already exists in the system. Please check your library before uploading."
             )
         elif "unsupported file type" in error_msg.lower():
-            metrics.increment_counter("book_upload_invalid_type", {"service": "ingestion"})
             logger.warning(f"Unsupported file type for: {file.filename}")
             raise HTTPException(
                 status_code=400,
                 detail="Unsupported file type. Please upload PDF, TXT, DOC, or DOCX files."
             )
         else:
-            metrics.increment_counter("book_upload_errors", {"service": "ingestion"})
             logger.error(f"ValueError processing book upload: {e}")
             # Try to fetch and return the book if it exists in DB
             from utils import calculate_file_hash
@@ -147,7 +140,6 @@ async def upload_book(
             raise HTTPException(status_code=400, detail=error_msg)
 
     except Exception as e:
-        metrics.increment_counter("book_upload_errors", {"service": "ingestion"})
         logger.error(f"Unexpected error processing book upload (type: {type(e).__name__}): {e}")
         # Try to fetch and return the book if it exists in DB
         from utils import calculate_file_hash
@@ -218,12 +210,6 @@ async def delete_book(
     except Exception as e:
         logger.error(f"Error deleting book {book_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-@app.get("/metrics")
-async def get_metrics():
-    """Get service metrics"""
-    # This would integrate with Prometheus in a real implementation
-    return {"message": "Metrics endpoint - integrate with Prometheus"}
 
 if __name__ == "__main__":
     uvicorn.run(

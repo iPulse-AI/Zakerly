@@ -180,39 +180,3 @@ def format_timestamp(dt: datetime) -> str:
 def parse_timestamp(timestamp_str: str) -> datetime:
     """Parse timestamp string to datetime"""
     return datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-
-class MetricsCollector:
-    """Simple metrics collector for monitoring"""
-    
-    def __init__(self):
-        self.metrics = {}
-        self.redis = get_redis()
-
-    def increment_counter(self, metric_name: str, labels: Dict[str, str] = None):
-        """Increment a counter metric"""
-        key = f"metrics:counter:{metric_name}"
-        if labels:
-            key += ":" + ":".join(f"{k}={v}" for k, v in labels.items())
-        
-        try:
-            if self.redis.client:
-                self.redis.client.incr(key)
-        except Exception as e:
-            logger.error(f"Failed to increment metric {metric_name}: {e}")
-
-    def record_histogram(self, metric_name: str, value: float, labels: Dict[str, str] = None):
-        """Record a histogram value"""
-        key = f"metrics:histogram:{metric_name}"
-        if labels:
-            key += ":" + ":".join(f"{k}={v}" for k, v in labels.items())
-        
-        try:
-            if self.redis.client:
-                # Simple histogram implementation using Redis lists
-                self.redis.client.lpush(f"{key}:values", value)
-                self.redis.client.ltrim(f"{key}:values", 0, 999)  # Keep last 1000 values
-        except Exception as e:
-            logger.error(f"Failed to record histogram {metric_name}: {e}")
-
-# Global metrics collector
-metrics = MetricsCollector()

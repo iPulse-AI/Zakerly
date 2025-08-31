@@ -9,7 +9,6 @@ from datetime import datetime
 import logging
 from contextlib import asynccontextmanager
 import json
-from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from fastapi import Response
 
 # Add shared modules to path
@@ -19,7 +18,7 @@ from models import (
     ChatRequest, ChatResponse, QuestionGenerationRequest, 
     LectureRequest, HealthCheck, BookModel
 )
-from utils import setup_logging, get_redis, metrics
+from utils import setup_logging, get_redis
 
 # Setup logging
 setup_logging("api-gateway")
@@ -169,8 +168,6 @@ async def health_check():
 async def upload_book(file: UploadFile = File(...)):
     """Upload book file"""
     try:
-        metrics.increment_counter("gateway_requests", {"service": "ingestion", "endpoint": "upload"})
-        
         # Prepare file for forwarding
         file_content = await file.read()
         files = {"file": (file.filename, file_content, file.content_type)}
@@ -182,13 +179,11 @@ async def upload_book(file: UploadFile = File(...)):
             files=files
         )
         
-        metrics.increment_counter("gateway_success", {"service": "ingestion", "endpoint": "upload"})
         return result
         
     except HTTPException:
         raise
     except Exception as e:
-        metrics.increment_counter("gateway_errors", {"service": "ingestion", "endpoint": "upload"})
         logger.error(f"Error in upload endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -196,8 +191,6 @@ async def upload_book(file: UploadFile = File(...)):
 async def list_books(category_id: int = None):
     """List books"""
     try:
-        metrics.increment_counter("gateway_requests", {"service": "ingestion", "endpoint": "books"})
-        
         params = {"category_id": category_id} if category_id else None
         result = await forward_request(
             INGESTION_SERVICE_URL,
@@ -270,8 +263,6 @@ async def delete_book(book_id: int):
 async def chat(request: ChatRequest):
     """Handle chat request"""
     try:
-        metrics.increment_counter("gateway_requests", {"service": "chat", "endpoint": "chat"})
-        
         result = await forward_request(
             CHAT_SERVICE_URL,
             "/chat",
@@ -279,13 +270,11 @@ async def chat(request: ChatRequest):
             data=request.dict()
         )
         
-        metrics.increment_counter("gateway_success", {"service": "chat", "endpoint": "chat"})
         return result
         
     except HTTPException:
         raise
     except Exception as e:
-        metrics.increment_counter("gateway_errors", {"service": "chat", "endpoint": "chat"})
         logger.error(f"Error in chat endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -293,8 +282,6 @@ async def chat(request: ChatRequest):
 async def generate_questions(request: QuestionGenerationRequest):
     """Generate questions"""
     try:
-        metrics.increment_counter("gateway_requests", {"service": "chat", "endpoint": "questions"})
-        
         result = await forward_request(
             CHAT_SERVICE_URL,
             "/generate-questions",
@@ -314,8 +301,6 @@ async def generate_questions(request: QuestionGenerationRequest):
 async def generate_lecture(request: LectureRequest):
     """Generate lecture"""
     try:
-        metrics.increment_counter("gateway_requests", {"service": "chat", "endpoint": "lecture"})
-        
         result = await forward_request(
             CHAT_SERVICE_URL,
             "/generate-lecture",
@@ -432,13 +417,6 @@ async def delete_session(session_id: str):
     except Exception as e:
         logger.error(f"Error in delete session endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-# Monitoring and Metrics
-@app.get("/api/v1/metrics")
-async def get_metrics():
-    """Prometheus metrics endpoint"""
-    data = generate_latest()
-    return Response(content=data, media_type=CONTENT_TYPE_LATEST)
 
 @app.get("/api/v1/status")
 async def get_system_status():

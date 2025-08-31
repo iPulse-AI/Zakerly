@@ -6,7 +6,6 @@ import sys
 from datetime import datetime
 import logging
 from contextlib import asynccontextmanager
-from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from fastapi import Response
 
 # Add shared modules to path
@@ -17,7 +16,7 @@ from models import (
     LectureRequest, HealthCheck, ChatSessionModel
 )
 from database import get_database, DatabaseManager
-from utils import setup_logging, get_redis, metrics, generate_session_id
+from utils import setup_logging, get_redis, generate_session_id
 from chat_service import ChatService
 
 # Setup logging
@@ -86,27 +85,15 @@ async def chat(
 ):
     """Handle chat requests"""
     try:
-        # Record metrics
-        metrics.increment_counter("chat_requests", {
-            "service": "chat",
-            "intent": request.intent or "answer_question"
-        })
-        
         logger.info(f"Chat request for book: {request.book_title}, session: {request.session_id}")
         
         response = await chat_service.handle_chat(request)
-        
-        metrics.increment_counter("chat_responses", {
-            "service": "chat",
-            "intent": response.intent
-        })
         
         return response
         
     except HTTPException:
         raise
     except Exception as e:
-        metrics.increment_counter("chat_errors", {"service": "chat"})
         logger.error(f"Error handling chat request: {e}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
@@ -117,20 +104,15 @@ async def generate_questions(
 ):
     """Generate questions for a book"""
     try:
-        metrics.increment_counter("question_generation_requests", {"service": "chat"})
-        
         logger.info(f"Question generation request for book: {request.book_title}")
         
         response = await chat_service.generate_questions(request)
-        
-        metrics.increment_counter("question_generation_success", {"service": "chat"})
         
         return response
         
     except HTTPException:
         raise
     except Exception as e:
-        metrics.increment_counter("question_generation_errors", {"service": "chat"})
         logger.error(f"Error generating questions: {e}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
@@ -141,20 +123,15 @@ async def generate_lecture(
 ):
     """Generate lecture for a book topic"""
     try:
-        metrics.increment_counter("lecture_generation_requests", {"service": "chat"})
-        
         logger.info(f"Lecture generation request for book: {request.book_title}")
         
         response = await chat_service.generate_lecture(request)
-        
-        metrics.increment_counter("lecture_generation_success", {"service": "chat"})
         
         return {"lecture": response}
         
     except HTTPException:
         raise
     except Exception as e:
-        metrics.increment_counter("lecture_generation_errors", {"service": "chat"})
         logger.error(f"Error generating lecture: {e}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
@@ -310,12 +287,6 @@ async def cleanup_expired_memories(
     except Exception as e:
         logger.error(f"Error cleaning up expired memories: {e}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-@app.get("/metrics")
-async def get_metrics():
-    """Prometheus metrics endpoint"""
-    data = generate_latest()
-    return Response(content=data, media_type=CONTENT_TYPE_LATEST)
 
 if __name__ == "__main__":
     uvicorn.run(
