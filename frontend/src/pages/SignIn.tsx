@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -6,10 +6,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Eye, EyeOff, Mail, Lock, ArrowRight, BookOpen } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
 import zakerlyLogo from '@/assets/zakerly-logo.png';
 
 export default function SignIn() {
   const navigate = useNavigate();
+  const { login, user, isLoading: authLoading } = useAuth();
   const [formData, setFormData] = useState({
     email: '',
     password: ''
@@ -17,6 +19,13 @@ export default function SignIn() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Redirect if user is already logged in
+  useEffect(() => {
+    if (!authLoading && user) {
+      navigate('/home');
+    }
+  }, [user, authLoading, navigate]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -39,16 +48,32 @@ export default function SignIn() {
     setError('');
 
     try {
-      // TODO: Replace with actual authentication logic
-      console.log('Sign in attempt:', { email: formData.email });
+      // Get the API Gateway URL from environment variables
+      const apiUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
       
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Send the login credentials to the API Gateway
+      const response = await fetch(`${apiUrl}/api/v1/auth/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(formData),
+      });
+
+      const responseData = await response.json();
+
+      if (!response.ok) {
+        throw new Error(responseData.detail || 'Login failed. Please check your credentials.');
+      }
+
+      const { access_token } = responseData;
       
-      // On successful signin, redirect to dashboard
-      navigate('/');
-    } catch (err) {
-      setError('Invalid email or password. Please try again.');
+      // Use the AuthContext login function
+      login(access_token);
+      
+    } catch (err: any) {
+      console.error('Login error:', err);
+      setError(err.message || 'Invalid email or password. Please try again.');
     } finally {
       setIsLoading(false);
     }

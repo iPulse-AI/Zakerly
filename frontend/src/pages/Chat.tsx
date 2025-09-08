@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Send, BookOpen, Download, Copy, ExternalLink, Loader2, AlertCircle, ArrowLeft, Brain, Plus } from 'lucide-react';
+import { Send, BookOpen, Download, Copy, ExternalLink, Loader2, AlertCircle, ArrowLeft, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { BooksService, ChatService, SessionService, Utils } from '@/lib/services';
 import type { Book as BookType, ChatMessage, ChatSession, ChatResponse, Category, QuestionGenerationRequest } from '@/lib/types';
@@ -37,7 +37,6 @@ export default function Chat() {
   const [isLoadingBooks, setIsLoadingBooks] = useState(true);
   const [error, setError] = useState('');
   const [currentSession, setCurrentSession] = useState<ChatSession | null>(null);
-  const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -147,59 +146,6 @@ export default function Chat() {
     
     // Start with a fresh session (don't load existing)
     // User can load existing session history if needed via a separate feature
-  };
-
-  const handleGenerateQuestions = async () => {
-    if (!selectedBook) {
-      setError('Please select a book first');
-      return;
-    }
-
-    setIsGeneratingQuestions(true);
-    setError('');
-
-    try {
-      const request: QuestionGenerationRequest = {
-        book_title: selectedBook,
-        user_message: 'Generate practice questions based on the book content',
-        count: 5,
-        difficulty: ['easy', 'medium', 'hard'],
-        question_types: ['multiple_choice_single_answer', 'true_false', 'open_ended_question']
-      };
-
-      const response = await ChatService.generateQuestions(request);
-      
-      // Format questions as a message
-      let questionsText = `📝 **Generated Questions for "${selectedBook}"**\n\n`;
-      response.questions_generated.forEach((q, index) => {
-        questionsText += `**Question ${index + 1}** (${q.difficulty}, ${q.type.replace(/_/g, ' ')})\n`;
-        questionsText += `${q.question_text}\n`;
-        
-        if (q.options && q.options.length > 0) {
-          q.options.forEach((option, i) => {
-            questionsText += `${String.fromCharCode(65 + i)}. ${option}\n`;
-          });
-        }
-        
-        questionsText += `*Answer: ${q.answer}*\n\n`;
-      });
-
-      // Add as a new message
-      const questionMessage: Message = {
-        id: `q${Date.now()}`,
-        type: 'assistant',
-        content: questionsText,
-        timestamp: new Date(),
-        metadata: { type: 'questions', source: 'generated' }
-      };
-
-      setMessages(prev => [...prev, questionMessage]);
-    } catch (err) {
-      console.error('Error generating questions:', err);
-      setError(err instanceof Error ? err.message : 'Failed to generate questions');
-    } finally {
-      setIsGeneratingQuestions(false);
-    }
   };
 
   const handleSendMessage = async () => {
@@ -352,8 +298,8 @@ export default function Chat() {
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-accent/5">
       <Header />
       
-      <div className="container mx-auto px-4 py-8">
-        <div className="max-w-4xl mx-auto">
+      <div className="container mx-auto px-4 py-8 h-screen flex flex-col">
+        <div className="max-w-4xl mx-auto flex-1 flex flex-col">
           {/* Header Section */}
           <div className="flex items-center gap-4 mb-8">
             <Button 
@@ -460,7 +406,7 @@ export default function Chat() {
                               {Utils.getCategoryName(selectedBookData.category_id)}
                             </Badge>
                             <Badge variant="outline" className="text-xs">
-                              <Brain className="w-3 h-3 mr-1" />
+                              <BookOpen className="w-3 h-3 mr-1" />
                               AI Enhanced
                             </Badge>
                           </div>
@@ -481,7 +427,7 @@ export default function Chat() {
 
               {/* Chat Interface */}
               {selectedBook && (
-                <Card className="h-[calc(100vh-400px)] min-h-[500px] flex flex-col">
+                <Card className="flex-1 flex flex-col bg-white shadow-lg">
                   <CardHeader className="border-b shrink-0">
                     <div className="flex items-center justify-between">
                       <CardTitle>Chat Session</CardTitle>
@@ -526,7 +472,7 @@ export default function Chat() {
                             <div className="flex items-center justify-center h-64 text-center">
                               <div className="space-y-3">
                                 <div className="w-16 h-16 bg-gradient-to-br from-primary to-secondary rounded-full flex items-center justify-center mx-auto">
-                                  <Brain className="w-8 h-8 text-white" />
+                                  <BookOpen className="w-8 h-8 text-white" />
                                 </div>
                                 <h3 className="text-lg font-semibold">Start Your Conversation</h3>
                                 <p className="text-muted-foreground max-w-md">
@@ -590,24 +536,6 @@ export default function Chat() {
                     
                     {/* Input Area */}
                     <div className="border-t p-4 shrink-0">
-                      {/* Action Buttons */}
-                      {selectedBook && (
-                        <div className="flex gap-2 mb-3">
-                          <Button
-                            onClick={handleGenerateQuestions}
-                            disabled={isGeneratingQuestions || isLoading}
-                            variant="outline"
-                            size="sm"
-                          >
-                            {isGeneratingQuestions ? (
-                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                            ) : (
-                              <Brain className="w-4 h-4 mr-2" />
-                            )}
-                            Generate Questions
-                          </Button>
-                        </div>
-                      )}
                       
                       <div className="flex gap-3">
                         <Textarea

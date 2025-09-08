@@ -82,8 +82,49 @@ export interface QuestionResponse {
 
 export interface LectureRequest {
   book_title: string;
-  topic?: string;
-  audience?: string;
+  user_message: string;
+  category?: string;
+  title?: string;
+  scope?: 'whole_book' | 'specific_topics';
+  specific_topics?: string;
+  detail_level?: 'overview' | 'detailed' | 'in-depth';
+}
+
+export interface LectureScript {
+  id: string;
+  user_id: string;
+  book_id: number;
+  title: string;
+  scope: 'whole_book' | 'specific_topics';
+  specific_topics?: string;
+  detail_level: 'overview' | 'detailed' | 'in-depth';
+  difficulty: 'beginner' | 'intermediate' | 'advanced';
+  duration: number; // minutes
+  content: string;
+  created_at: string;
+  updated_at: string;
+  book_title?: string; // Added by join query
+}
+
+export interface LectureScriptRequest {
+  book_id: number;
+  title: string;
+  scope: 'whole_book' | 'specific_topics';
+  specific_topics?: string;
+  detail_level: 'overview' | 'detailed' | 'in-depth';
+  difficulty: 'beginner' | 'intermediate' | 'advanced';
+  duration: number;
+  content: string;
+}
+
+export interface LectureScriptUpdate {
+  title?: string;
+  content?: string;
+  scope?: 'whole_book' | 'specific_topics';
+  specific_topics?: string;
+  detail_level?: 'overview' | 'detailed' | 'in-depth';
+  difficulty?: 'beginner' | 'intermediate' | 'advanced';
+  duration?: number;
 }
 
 // Upload types

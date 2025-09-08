@@ -2,11 +2,13 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from './button';
 import { Card } from './card';
-import { Upload, Database, Brain, Zap } from 'lucide-react';
+import { Upload, Database, Brain, Zap, ArrowRight } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
 import heroIllustration from '@/assets/hero-illustration.png';
 
 export function HeroSection() {
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   return (
     <section className="relative py-20 overflow-hidden">
@@ -32,14 +34,37 @@ export function HeroSection() {
 
             {/* CTA Buttons */}
             <div className="flex flex-col sm:flex-row gap-4">
-              <Button 
-                size="lg" 
-                className="bg-gradient-primary hover:shadow-strong floating-action text-lg px-8 py-6"
-                onClick={() => navigate('/books/add')}
-              >
-                <Upload className="w-5 h-5 mr-2" />
-                Upload your book
-              </Button>
+              {user ? (
+                // Authenticated user - show upload button
+                <Button 
+                  size="lg" 
+                  className="bg-gradient-primary hover:shadow-strong floating-action text-lg px-8 py-6"
+                  onClick={() => navigate('/books/add')}
+                >
+                  <Upload className="w-5 h-5 mr-2" />
+                  Upload your book
+                </Button>
+              ) : (
+                // Guest user - show auth buttons
+                <>
+                  <Button 
+                    size="lg" 
+                    className="bg-gradient-primary hover:shadow-strong floating-action text-lg px-8 py-6"
+                    onClick={() => navigate('/signup')}
+                  >
+                    Get Started Free
+                    <ArrowRight className="w-5 h-5 ml-2" />
+                  </Button>
+                  <Button 
+                    size="lg" 
+                    variant="outline"
+                    className="text-lg px-8 py-6 border-2"
+                    onClick={() => navigate('/signin')}
+                  >
+                    Sign In
+                  </Button>
+                </>
+              )}
             </div>
 
             {/* Feature Highlights */}

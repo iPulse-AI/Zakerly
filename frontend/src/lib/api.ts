@@ -22,6 +22,11 @@ export const API_ENDPOINTS = {
   CHAT_HISTORY: (sessionId: string) => `/api/v1/sessions/${sessionId}/history`,
   DELETE_SESSION: (sessionId: string) => `/api/v1/sessions/${sessionId}`,
   
+  // Scripts
+  SCRIPTS: '/api/v1/scripts',
+  SCRIPT_BY_ID: (id: string) => `/api/v1/scripts/${id}`,
+  USER_SCRIPTS: (userId: string) => `/api/v1/users/${userId}/scripts`,
+  
   // System
   HEALTH: '/health',
   STATUS: '/api/v1/status'
@@ -86,6 +91,13 @@ class ApiClient {
 
   async delete<T>(endpoint: string): Promise<T> {
     return this.request<T>(endpoint, { method: 'DELETE' });
+  }
+
+  async put<T>(endpoint: string, data?: any): Promise<T> {
+    return this.request<T>(endpoint, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
   }
 }
 

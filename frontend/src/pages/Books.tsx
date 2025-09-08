@@ -12,7 +12,6 @@ import {
   Search, 
   MessageSquare, 
   GraduationCap,
-  Trash2,
   Loader2,
   AlertCircle,
   Sparkles
@@ -52,34 +51,6 @@ export default function Books() {
       setError(err instanceof Error ? err.message : 'Failed to load books');
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const handleDeleteBook = async (bookId: number, bookTitle: string) => {
-    const confirmMessage = `Are you sure you want to delete "${bookTitle}"?\n\nThis will remove the book and all its chat sessions.\nThis action cannot be undone.`;
-    
-    if (!confirm(confirmMessage)) {
-      return;
-    }
-
-    try {
-      await BooksService.deleteBook(bookId);
-      setBooks(books.filter(book => book.id !== bookId));
-      setError(''); // Clear any previous errors
-    } catch (err) {
-      console.error('Error deleting book:', err);
-      
-      if (err instanceof Error) {
-        if (err.message.includes('not found') || err.message.includes('404')) {
-          // Book might already be deleted, refresh the list
-          setError('');
-          loadData();
-        } else {
-          setError(`Failed to delete "${bookTitle}": ${err.message}`);
-        }
-      } else {
-        setError(`Failed to delete "${bookTitle}". Please try again.`);
-      }
     }
   };
 
@@ -265,16 +236,6 @@ export default function Books() {
                         <p className="text-sm text-muted-foreground truncate">
                           {book.author ? `by ${book.author}` : 'Author unknown'}
                         </p>
-                      </div>
-                      <div className="flex gap-1 ml-2">
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          className="w-8 h-8 text-destructive hover:text-destructive"
-                          onClick={() => handleDeleteBook(book.id, book.title)}
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </Button>
                       </div>
                     </div>
                   </CardHeader>

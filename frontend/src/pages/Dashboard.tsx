@@ -1,149 +1,294 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Header } from '@/components/ui/header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { BooksService, ScriptsService, SessionService } from '@/lib/services';
+import { useAuth } from '@/contexts/AuthContext';
 import { 
   BookOpen, 
-  GraduationCap, 
-  Trophy, 
-  Target, 
-  Clock, 
-  Calendar, 
   TrendingUp, 
   Flame,
-  Star,
-  Award,
   BarChart3,
   Activity,
   Plus,
   ArrowRight,
-  Zap,
   Brain,
-  CheckCircle
+  CheckCircle,
+  MessageCircle,
+  FileText,
+  Loader2,
+  AlertCircle
 } from 'lucide-react';
 
-// Mock user data
-const userData = {
-  name: "John Doe",
-  userType: "Student",
-  joinDate: "January 2024",
-  streak: 12,
-  totalPoints: 2850,
-  level: 8,
-  nextLevelPoints: 3000
-};
+interface DashboardStats {
+  totalBooks: number;
+  totalScripts: number;
+  totalSessions: number;
+  totalChats: number;
+  lastActivity: string;
+}
 
-const stats = [
-  { label: "Books Read", value: 15, icon: BookOpen, color: "text-blue-600", bgColor: "bg-blue-100" },
-  { label: "Exams Taken", value: 28, icon: GraduationCap, color: "text-purple-600", bgColor: "bg-purple-100" },
-  { label: "Scripts Created", value: 8, icon: Trophy, color: "text-green-600", bgColor: "bg-green-100" },
-  { label: "Study Hours", value: 127, icon: Clock, color: "text-orange-600", bgColor: "bg-orange-100" }
-];
+interface Book {
+  id: number;
+  title: string;
+  author?: string;
+  category_id: number;
+  created_at: string;
+}
 
-const achievements = [
-  { 
-    id: 1, 
-    title: "First Steps", 
-    description: "Added your first book", 
-    icon: BookOpen, 
-    unlocked: true, 
-    date: "Jan 15, 2024",
-    rarity: "common"
-  },
-  { 
-    id: 2, 
-    title: "Scholar", 
-    description: "Read 10 books", 
-    icon: GraduationCap, 
-    unlocked: true, 
-    date: "Feb 20, 2024",
-    rarity: "rare"
-  },
-  { 
-    id: 3, 
-    title: "Streak Master", 
-    description: "10-day study streak", 
-    icon: Flame, 
-    unlocked: true, 
-    date: "Mar 5, 2024",
-    rarity: "epic"
-  },
-  { 
-    id: 4, 
-    title: "Exam Ace", 
-    description: "Score 90%+ on 5 exams", 
-    icon: Star, 
-    unlocked: true, 
-    date: "Mar 12, 2024",
-    rarity: "rare"
-  },
-  { 
-    id: 5, 
-    title: "Knowledge Seeker", 
-    description: "Ask 100 AI questions", 
-    icon: Brain, 
-    unlocked: false, 
-    progress: 78,
-    rarity: "epic"
-  },
-  { 
-    id: 6, 
-    title: "Master Scholar", 
-    description: "Read 25 books", 
-    icon: Award, 
-    unlocked: false, 
-    progress: 60,
-    rarity: "legendary"
-  }
-];
+interface Script {
+  id: string;
+  title: string;
+  detail_level: string;
+  difficulty: string;
+  created_at: string;
+}
 
-const recentActivity = [
-  { type: "exam", title: "Psychology Fundamentals Quiz", score: "92%", time: "2 hours ago" },
-  { type: "chat", title: "Asked about cognitive psychology", time: "5 hours ago" },
-  { type: "book", title: "Added 'Introduction to Biology'", time: "1 day ago" },
-  { type: "script", title: "Created lecture script", time: "2 days ago" },
-  { type: "exam", title: "Calculus Practice Test", score: "88%", time: "3 days ago" }
-];
+interface Session {
+  id: string;
+  session_name?: string;
+  created_at: string;
+  updated_at: string;
+}
 
-const weeklyProgress = [
-  { day: "Mon", books: 2, exams: 1, chats: 5 },
-  { day: "Tue", books: 1, exams: 2, chats: 8 },
-  { day: "Wed", books: 3, exams: 1, chats: 12 },
-  { day: "Thu", books: 1, exams: 3, chats: 6 },
-  { day: "Fri", books: 2, exams: 2, chats: 9 },
-  { day: "Sat", books: 4, exams: 1, chats: 15 },
-  { day: "Sun", books: 1, exams: 0, chats: 3 }
-];
-
-const getRarityColor = (rarity: string) => {
-  switch (rarity) {
-    case 'common': return 'text-gray-600 bg-gray-100';
-    case 'rare': return 'text-blue-600 bg-blue-100';
-    case 'epic': return 'text-purple-600 bg-purple-100';
-    case 'legendary': return 'text-yellow-600 bg-yellow-100';
-    default: return 'text-gray-600 bg-gray-100';
-  }
-};
-
-const getActivityIcon = (type: string) => {
-  switch (type) {
-    case 'exam': return GraduationCap;
-    case 'chat': return Brain;
-    case 'book': return BookOpen;
-    case 'script': return Trophy;
-    default: return Activity;
-  }
-};
+interface RecentActivity {
+  type: 'book' | 'script' | 'session' | 'chat';
+  title: string;
+  time: string;
+  score?: string;
+  icon: React.ComponentType<any>;
+}
 
 export default function Dashboard() {
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [selectedTab, setSelectedTab] = useState("overview");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  
+  // State for real data
+  const [stats, setStats] = useState<DashboardStats>({
+    totalBooks: 0,
+    totalScripts: 0,
+    totalSessions: 0,
+    totalChats: 0,
+    lastActivity: 'Never'
+  });
+  
+  const [recentBooks, setRecentBooks] = useState<Book[]>([]);
+  const [recentScripts, setRecentScripts] = useState<Script[]>([]);
+  const [recentSessions, setRecentSessions] = useState<Session[]>([]);
+  const [recentActivity, setRecentActivity] = useState<RecentActivity[]>([]);
 
-  const progressToNextLevel = ((userData.totalPoints % 500) / 500) * 100;
+  // Fetch user data on component mount
+  useEffect(() => {
+    if (user?.sub) {
+      fetchDashboardData();
+    }
+  }, [user?.sub]);
+
+  const fetchDashboardData = async () => {
+    if (!user?.sub) return;
+    
+    try {
+      setLoading(true);
+      setError(null);
+
+      // Fetch all data in parallel
+      const [booksData, scriptsData, sessionsData] = await Promise.all([
+        BooksService.getBooks().catch(err => {
+          console.warn('Failed to fetch books:', err);
+          return [];
+        }),
+        ScriptsService.getUserScripts(user.sub).catch(err => {
+          console.warn('Failed to fetch scripts:', err);
+          return [];
+        }),
+        SessionService.getUserSessions(user.sub).catch(err => {
+          console.warn('Failed to fetch sessions:', err);
+          return [];
+        })
+      ]);
+
+      // Process and set data
+      setRecentBooks(booksData.slice(0, 5) || []);
+      setRecentScripts(scriptsData.slice(0, 5) || []);
+      setRecentSessions(sessionsData.slice(0, 5) || []);
+
+      // Calculate stats
+      const newStats: DashboardStats = {
+        totalBooks: booksData?.length || 0,
+        totalScripts: scriptsData?.length || 0,
+        totalSessions: sessionsData?.length || 0,
+        totalChats: sessionsData?.length || 0,
+        lastActivity: getLastActivity(booksData, scriptsData, sessionsData)
+      };
+      setStats(newStats);
+
+      // Generate recent activity
+      generateRecentActivity(booksData, scriptsData, sessionsData);
+
+    } catch (err) {
+      console.error('Error fetching dashboard data:', err);
+      setError('Failed to load dashboard data. Please try refreshing the page.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getLastActivity = (books: Book[], scripts: Script[], sessions: Session[]): string => {
+    const allDates = [
+      ...books.map(b => new Date(b.created_at)),
+      ...scripts.map(s => new Date(s.created_at)),
+      ...sessions.map(s => new Date(s.updated_at))
+    ];
+
+    if (allDates.length === 0) return 'Never';
+
+    const latest = new Date(Math.max(...allDates.map(d => d.getTime())));
+    const now = new Date();
+    const diffInHours = Math.floor((now.getTime() - latest.getTime()) / (1000 * 60 * 60));
+
+    if (diffInHours < 1) return 'Just now';
+    if (diffInHours < 24) return `${diffInHours} hours ago`;
+    const diffInDays = Math.floor(diffInHours / 24);
+    if (diffInDays === 1) return 'Yesterday';
+    if (diffInDays < 7) return `${diffInDays} days ago`;
+    return latest.toLocaleDateString();
+  };
+
+  const generateRecentActivity = (books: Book[], scripts: Script[], sessions: Session[]) => {
+    const activities: RecentActivity[] = [];
+
+    // Add recent books
+    books.slice(0, 3).forEach(book => {
+      activities.push({
+        type: 'book',
+        title: `Added "${book.title}"`,
+        time: getRelativeTime(book.created_at),
+        icon: BookOpen
+      });
+    });
+
+    // Add recent scripts
+    scripts.slice(0, 3).forEach(script => {
+      activities.push({
+        type: 'script',
+        title: `Created "${script.title}"`,
+        time: getRelativeTime(script.created_at),
+        icon: FileText
+      });
+    });
+
+    // Add recent sessions
+    sessions.slice(0, 3).forEach(session => {
+      activities.push({
+        type: 'session',
+        title: `Chat session: ${session.session_name || 'Unnamed'}`,
+        time: getRelativeTime(session.updated_at),
+        icon: MessageCircle
+      });
+    });
+
+    // Sort by time and take the most recent 10
+    activities.sort((a, b) => {
+      const timeA = new Date(a.time.includes('ago') ? Date.now() : a.time).getTime();
+      const timeB = new Date(b.time.includes('ago') ? Date.now() : b.time).getTime();
+      return timeB - timeA;
+    });
+
+    setRecentActivity(activities.slice(0, 10));
+  };
+
+  const getRelativeTime = (dateString: string): string => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60));
+
+    if (diffInMinutes < 1) return 'Just now';
+    if (diffInMinutes < 60) return `${diffInMinutes} minutes ago`;
+    
+    const diffInHours = Math.floor(diffInMinutes / 60);
+    if (diffInHours < 24) return `${diffInHours} hours ago`;
+    
+    const diffInDays = Math.floor(diffInHours / 24);
+    if (diffInDays === 1) return 'Yesterday';
+    if (diffInDays < 7) return `${diffInDays} days ago`;
+    
+    return date.toLocaleDateString();
+  };
+
+  // Simple motivational message
+  const getMotivationalMessage = () => {
+    const recentBooksCount = recentBooks.length;
+    const recentScriptsCount = recentScripts.length;
+
+    if (stats.totalBooks === 0) {
+      return "Welcome to Zakerly! Start by adding your first book to begin your learning journey.";
+    }
+    if (recentBooksCount > 0 && recentScriptsCount === 0) {
+      return "Great start! You've added books. Now try creating your first lecture script.";
+    }
+    if (stats.totalSessions === 0) {
+      return "Ready to dive deeper? Start a chat session with your books to unlock AI-powered insights.";
+    }
+    return "Keep up the great work with your learning journey!";
+  };
+
+  const statCards = [
+    { 
+      label: "Books in Library", 
+      value: stats.totalBooks, 
+      icon: BookOpen, 
+      color: "text-blue-600", 
+      bgColor: "bg-blue-100",
+      action: () => navigate('/books')
+    },
+    { 
+      label: "Lecture Scripts", 
+      value: stats.totalScripts, 
+      icon: FileText, 
+      color: "text-purple-600", 
+      bgColor: "bg-purple-100",
+      action: () => navigate('/scripts')
+    },
+    { 
+      label: "Chat Sessions", 
+      value: stats.totalSessions, 
+      icon: MessageCircle, 
+      color: "text-green-600", 
+      bgColor: "bg-green-100",
+      action: () => navigate('/chat')
+    },
+    { 
+      label: "AI Interactions", 
+      value: stats.totalChats, 
+      icon: Brain, 
+      color: "text-orange-600", 
+      bgColor: "bg-orange-100",
+      action: () => navigate('/chat')
+    }
+  ];
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-background via-background to-accent/5">
+        <Header />
+        <div className="container mx-auto px-4 py-8">
+          <div className="flex items-center justify-center min-h-[400px]">
+            <div className="text-center">
+              <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-primary" />
+              <p className="text-muted-foreground">Loading your dashboard...</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-accent/5">
@@ -155,52 +300,47 @@ export default function Dashboard() {
           <div className="mb-8">
             <div className="flex items-center justify-between mb-6">
               <div>
-                <h1 className="text-3xl font-bold text-gradient-primary mb-2">
-                  Welcome back, {userData.name}! 👋
+                <h1 className="text-3xl font-bold bg-gradient-to-r from-primary to-purple-600 bg-clip-text text-transparent mb-2">
+                  Welcome back! 👋
                 </h1>
                 <p className="text-muted-foreground">
-                  Here's your learning progress and achievements
+                  Here's your learning progress and activities
                 </p>
               </div>
               <div className="text-right">
                 <div className="flex items-center gap-2 mb-2">
-                  <Flame className="w-5 h-5 text-orange-500" />
-                  <span className="font-bold text-orange-500">{userData.streak} day streak</span>
+                  <Activity className="w-5 h-5 text-primary" />
+                  <span className="font-medium">Last active: {stats.lastActivity}</span>
                 </div>
-                <Badge variant="secondary" className="bg-primary/10 text-primary">
-                  Level {userData.level} {userData.userType}
-                </Badge>
               </div>
             </div>
 
-            {/* Level Progress */}
-            <Card className="mb-6">
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-medium">Level {userData.level} Progress</span>
-                  <span className="text-sm text-muted-foreground">
-                    {userData.totalPoints} / {userData.nextLevelPoints} XP
-                  </span>
-                </div>
-                <Progress value={progressToNextLevel} className="h-3" />
-                <p className="text-xs text-muted-foreground mt-2">
-                  {userData.nextLevelPoints - userData.totalPoints} XP until Level {userData.level + 1}
-                </p>
-              </CardContent>
-            </Card>
+
+
+            {/* Error Display */}
+            {error && (
+              <Alert className="mb-6">
+                <AlertCircle className="w-4 h-4" />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
           </div>
 
           {/* Stats Overview */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-            {stats.map((stat, index) => (
-              <Card key={index} className="hover:shadow-lg transition-shadow duration-200">
+            {statCards.map((stat, index) => (
+              <Card 
+                key={index} 
+                className="hover:shadow-lg transition-all duration-200 cursor-pointer group"
+                onClick={stat.action}
+              >
                 <CardContent className="pt-6">
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm text-muted-foreground">{stat.label}</p>
                       <p className="text-2xl font-bold">{stat.value}</p>
                     </div>
-                    <div className={`w-12 h-12 rounded-lg ${stat.bgColor} flex items-center justify-center`}>
+                    <div className={`w-12 h-12 rounded-lg ${stat.bgColor} flex items-center justify-center group-hover:scale-110 transition-transform`}>
                       <stat.icon className={`w-6 h-6 ${stat.color}`} />
                     </div>
                   </div>
@@ -209,319 +349,282 @@ export default function Dashboard() {
             ))}
           </div>
 
+          {/* Quick Actions */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <Card className="hover:shadow-lg transition-all duration-200 cursor-pointer group" onClick={() => navigate('/add-book')}>
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-lg bg-blue-100 flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <Plus className="w-6 h-6 text-blue-600" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold">Add New Book</h3>
+                    <p className="text-sm text-muted-foreground">Expand your library</p>
+                  </div>
+                  <ArrowRight className="w-5 h-5 text-muted-foreground ml-auto group-hover:translate-x-1 transition-transform" />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="hover:shadow-lg transition-all duration-200 cursor-pointer group" onClick={() => navigate('/scripts')}>
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-lg bg-purple-100 flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <FileText className="w-6 h-6 text-purple-600" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold">Create Script</h3>
+                    <p className="text-sm text-muted-foreground">Generate lecture content</p>
+                  </div>
+                  <ArrowRight className="w-5 h-5 text-muted-foreground ml-auto group-hover:translate-x-1 transition-transform" />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="hover:shadow-lg transition-all duration-200 cursor-pointer group" onClick={() => navigate('/chat')}>
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-lg bg-green-100 flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <Brain className="w-6 h-6 text-green-600" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold">Start Chat</h3>
+                    <p className="text-sm text-muted-foreground">AI-powered learning</p>
+                  </div>
+                  <ArrowRight className="w-5 h-5 text-muted-foreground ml-auto group-hover:translate-x-1 transition-transform" />
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
           {/* Main Content Tabs */}
-          <Tabs value={selectedTab} onValueChange={setSelectedTab}>
-            <TabsList className="grid w-full grid-cols-4">
-              <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="achievements">Achievements</TabsTrigger>
-              <TabsTrigger value="activity">Activity</TabsTrigger>
-              <TabsTrigger value="analytics">Analytics</TabsTrigger>
+          <Tabs value={selectedTab} onValueChange={setSelectedTab} className="w-full">
+            <TabsList className="grid w-full grid-cols-3 mb-8">
+              <TabsTrigger value="overview" className="flex items-center gap-2">
+                <BarChart3 className="w-4 h-4" />
+                Overview
+              </TabsTrigger>
+              <TabsTrigger value="activity" className="flex items-center gap-2">
+                <Activity className="w-4 h-4" />
+                Recent Activity
+              </TabsTrigger>
+              <TabsTrigger value="library" className="flex items-center gap-2">
+                <BookOpen className="w-4 h-4" />
+                My Library
+              </TabsTrigger>
             </TabsList>
 
-            {/* Overview Tab */}
-            <TabsContent value="overview" className="space-y-6">
+            <TabsContent value="overview">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Recent Activity */}
+                {/* Learning Streak */}
                 <Card>
-                  <CardHeader>
+                  <CardHeader className="pb-4">
                     <CardTitle className="flex items-center gap-2">
-                      <Activity className="w-5 h-5 text-primary" />
-                      Recent Activity
+                      <Flame className="w-5 h-5 text-orange-500" />
+                      Learning Momentum
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-4">
-                      {recentActivity.slice(0, 5).map((activity, index) => {
-                        const Icon = getActivityIcon(activity.type);
-                        return (
-                          <div key={index} className="flex items-center gap-3 p-3 rounded-lg bg-muted/30">
-                            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-                              <Icon className="w-4 h-4 text-primary" />
-                            </div>
-                            <div className="flex-1">
-                              <p className="font-medium text-sm">{activity.title}</p>
-                              {activity.score && (
-                                <Badge variant="secondary" className="mt-1">
-                                  {activity.score}
-                                </Badge>
-                              )}
-                            </div>
-                            <span className="text-xs text-muted-foreground">{activity.time}</span>
+                      <div className="text-center">
+                        <div className="text-3xl font-bold text-orange-500 mb-2">
+                          {stats.totalSessions > 0 ? Math.min(stats.totalSessions, 30) : 0} days
+                        </div>
+                        <p className="text-muted-foreground">Current streak</p>
+                      </div>
+                      <div className="grid grid-cols-7 gap-1">
+                        {Array.from({ length: 7 }, (_, i) => (
+                          <div
+                            key={i}
+                            className={`h-8 rounded flex items-center justify-center text-xs font-medium ${
+                              i < Math.min(stats.totalSessions, 7)
+                                ? 'bg-orange-100 text-orange-600'
+                                : 'bg-gray-100 text-gray-400'
+                            }`}
+                          >
+                            {i < Math.min(stats.totalSessions, 7) ? '🔥' : '💤'}
                           </div>
-                        );
-                      })}
+                        ))}
+                      </div>
+                      <p className="text-sm text-center text-muted-foreground">
+                        Keep learning daily to maintain your streak!
+                      </p>
                     </div>
                   </CardContent>
                 </Card>
 
-                {/* Quick Actions */}
+                {/* Performance Overview */}
                 <Card>
-                  <CardHeader>
+                  <CardHeader className="pb-4">
                     <CardTitle className="flex items-center gap-2">
-                      <Zap className="w-5 h-5 text-primary" />
-                      Quick Actions
+                      <TrendingUp className="w-5 h-5 text-green-500" />
+                      This Week's Activity
                     </CardTitle>
                   </CardHeader>
-                  <CardContent className="space-y-3">
-                    <Button 
-                      onClick={() => navigate('/books/add')}
-                      className="w-full justify-start"
-                      variant="outline"
-                    >
-                      <Plus className="w-4 h-4 mr-2" />
-                      Add New Book
-                    </Button>
-                    <Button 
-                      onClick={() => navigate('/exams')}
-                      className="w-full justify-start"
-                      variant="outline"
-                    >
-                      <GraduationCap className="w-4 h-4 mr-2" />
-                      Create Exam
-                    </Button>
-                    <Button 
-                      onClick={() => navigate('/chat')}
-                      className="w-full justify-start"
-                      variant="outline"
-                    >
-                      <Brain className="w-4 h-4 mr-2" />
-                      Chat with Books
-                    </Button>
-                    <Button 
-                      onClick={() => navigate('/scripts')}
-                      className="w-full justify-start"
-                      variant="outline"
-                    >
-                      <Trophy className="w-4 h-4 mr-2" />
-                      Create Script
-                    </Button>
+                  <CardContent>
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-muted-foreground">Books Added</span>
+                        <span className="font-semibold">{recentBooks.length}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-muted-foreground">Scripts Created</span>
+                        <span className="font-semibold">{recentScripts.length}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-muted-foreground">Chat Sessions</span>
+                        <span className="font-semibold">{recentSessions.length}</span>
+                      </div>
+                      <div className="pt-4 border-t">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle className="w-4 h-4 text-green-500" />
+                          <span className="text-sm">
+                            {stats.totalBooks + stats.totalScripts + stats.totalSessions > 0 
+                              ? "Great progress this week!" 
+                              : "Start your learning journey today!"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
                   </CardContent>
                 </Card>
               </div>
-
-              {/* Goals Section */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Target className="w-5 h-5 text-primary" />
-                    This Week's Goals
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm font-medium">Read 3 Books</span>
-                        <span className="text-sm text-muted-foreground">2/3</span>
-                      </div>
-                      <Progress value={67} className="h-2" />
-                    </div>
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm font-medium">Take 5 Exams</span>
-                        <span className="text-sm text-muted-foreground">7/5</span>
-                      </div>
-                      <Progress value={100} className="h-2" />
-                    </div>
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm font-medium">Study 10 Hours</span>
-                        <span className="text-sm text-muted-foreground">8/10</span>
-                      </div>
-                      <Progress value={80} className="h-2" />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
             </TabsContent>
 
-            {/* Achievements Tab */}
-            <TabsContent value="achievements">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Trophy className="w-5 h-5 text-primary" />
-                    Achievements & Badges
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {achievements.map((achievement) => (
-                      <div 
-                        key={achievement.id}
-                        className={`p-4 rounded-lg border-2 transition-all duration-200 ${
-                          achievement.unlocked 
-                            ? 'border-primary/20 bg-primary/5 hover:shadow-lg' 
-                            : 'border-muted bg-muted/20 opacity-75'
-                        }`}
-                      >
-                        <div className="flex items-start gap-3">
-                          <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${
-                            achievement.unlocked ? 'bg-primary/10' : 'bg-muted'
-                          }`}>
-                            <achievement.icon className={`w-6 h-6 ${
-                              achievement.unlocked ? 'text-primary' : 'text-muted-foreground'
-                            }`} />
-                          </div>
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-1">
-                              <h3 className="font-semibold">{achievement.title}</h3>
-                              <Badge 
-                                variant="secondary" 
-                                className={`text-xs ${getRarityColor(achievement.rarity)}`}
-                              >
-                                {achievement.rarity}
-                              </Badge>
-                            </div>
-                            <p className="text-sm text-muted-foreground mb-2">
-                              {achievement.description}
-                            </p>
-                            {achievement.unlocked ? (
-                              <div className="flex items-center gap-1 text-xs text-green-600">
-                                <CheckCircle className="w-3 h-3" />
-                                <span>Unlocked {achievement.date}</span>
-                              </div>
-                            ) : achievement.progress ? (
-                              <div className="space-y-1">
-                                <div className="flex justify-between text-xs">
-                                  <span>Progress</span>
-                                  <span>{achievement.progress}%</span>
-                                </div>
-                                <Progress value={achievement.progress} className="h-1" />
-                              </div>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">Locked</span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* Activity Tab */}
             <TabsContent value="activity">
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
-                    <Calendar className="w-5 h-5 text-primary" />
-                    Activity History
+                    <Activity className="w-5 h-5" />
+                    Recent Activity
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-4">
-                    {recentActivity.map((activity, index) => {
-                      const Icon = getActivityIcon(activity.type);
-                      return (
-                        <div key={index} className="flex items-center gap-4 p-4 rounded-lg border">
-                          <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-                            <Icon className="w-5 h-5 text-primary" />
-                          </div>
-                          <div className="flex-1">
-                            <p className="font-medium">{activity.title}</p>
+                  {recentActivity.length > 0 ? (
+                    <div className="space-y-4">
+                      {recentActivity.map((activity, index) => {
+                        const IconComponent = activity.icon;
+                        return (
+                          <div key={index} className="flex items-center gap-4 p-3 rounded-lg hover:bg-accent/50 transition-colors">
+                            <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                              <IconComponent className="w-5 h-5 text-primary" />
+                            </div>
+                            <div className="flex-1">
+                              <p className="font-medium">{activity.title}</p>
+                              <p className="text-sm text-muted-foreground">{activity.time}</p>
+                            </div>
                             {activity.score && (
-                              <Badge variant="secondary" className="mt-1">
-                                Score: {activity.score}
+                              <Badge variant="secondary" className="bg-green-100 text-green-700">
+                                {activity.score}
                               </Badge>
                             )}
                           </div>
-                          <span className="text-sm text-muted-foreground">{activity.time}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8">
+                      <Activity className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+                      <p className="text-muted-foreground">No recent activity</p>
+                      <p className="text-sm text-muted-foreground mt-2">
+                        Start by adding a book or creating your first script!
+                      </p>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </TabsContent>
 
-            {/* Analytics Tab */}
-            <TabsContent value="analytics">
+            <TabsContent value="library">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Recent Books */}
                 <Card>
-                  <CardHeader>
+                  <CardHeader className="flex flex-row items-center justify-between">
                     <CardTitle className="flex items-center gap-2">
-                      <BarChart3 className="w-5 h-5 text-primary" />
-                      Weekly Activity
+                      <BookOpen className="w-5 h-5" />
+                      Recent Books
                     </CardTitle>
+                    <Button variant="outline" size="sm" onClick={() => navigate('/books')}>
+                      View All
+                    </Button>
                   </CardHeader>
                   <CardContent>
-                    <div className="space-y-4">
-                      {weeklyProgress.map((day, index) => (
-                        <div key={index} className="space-y-2">
-                          <div className="flex justify-between text-sm">
-                            <span className="font-medium">{day.day}</span>
-                            <span className="text-muted-foreground">
-                              {day.books + day.exams + Math.floor(day.chats / 5)} activities
-                            </span>
+                    {recentBooks.length > 0 ? (
+                      <div className="space-y-3">
+                        {recentBooks.map((book) => (
+                          <div key={book.id} className="flex items-center gap-3 p-3 rounded-lg hover:bg-accent/50 transition-colors">
+                            <div className="w-10 h-10 rounded bg-blue-100 flex items-center justify-center">
+                              <BookOpen className="w-5 h-5 text-blue-600" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium truncate">{book.title}</p>
+                              {book.author && (
+                                <p className="text-sm text-muted-foreground truncate">{book.author}</p>
+                              )}
+                              <p className="text-xs text-muted-foreground">
+                                Added {getRelativeTime(book.created_at)}
+                              </p>
+                            </div>
                           </div>
-                          <div className="flex gap-1 h-2">
-                            <div 
-                              className="bg-blue-500 rounded" 
-                              style={{ width: `${(day.books / 5) * 100}%` }}
-                            />
-                            <div 
-                              className="bg-purple-500 rounded" 
-                              style={{ width: `${(day.exams / 3) * 100}%` }}
-                            />
-                            <div 
-                              className="bg-green-500 rounded" 
-                              style={{ width: `${(day.chats / 15) * 100}%` }}
-                            />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="flex gap-4 mt-4 text-xs">
-                      <div className="flex items-center gap-1">
-                        <div className="w-3 h-3 bg-blue-500 rounded" />
-                        <span>Books</span>
+                        ))}
                       </div>
-                      <div className="flex items-center gap-1">
-                        <div className="w-3 h-3 bg-purple-500 rounded" />
-                        <span>Exams</span>
+                    ) : (
+                      <div className="text-center py-6">
+                        <BookOpen className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
+                        <p className="text-muted-foreground">No books yet</p>
+                        <Button size="sm" className="mt-3" onClick={() => navigate('/add-book')}>
+                          Add Your First Book
+                        </Button>
                       </div>
-                      <div className="flex items-center gap-1">
-                        <div className="w-3 h-3 bg-green-500 rounded" />
-                        <span>AI Chats</span>
-                      </div>
-                    </div>
+                    )}
                   </CardContent>
                 </Card>
 
+                {/* Recent Scripts */}
                 <Card>
-                  <CardHeader>
+                  <CardHeader className="flex flex-row items-center justify-between">
                     <CardTitle className="flex items-center gap-2">
-                      <TrendingUp className="w-5 h-5 text-primary" />
-                      Learning Insights
+                      <FileText className="w-5 h-5" />
+                      Recent Scripts
                     </CardTitle>
+                    <Button variant="outline" size="sm" onClick={() => navigate('/scripts')}>
+                      View All
+                    </Button>
                   </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="p-3 rounded-lg bg-green-50 border border-green-200">
-                      <h4 className="font-medium text-green-800 mb-1">Strong Performance</h4>
-                      <p className="text-sm text-green-700">
-                        Your exam scores have improved by 15% this month!
-                      </p>
-                    </div>
-                    <div className="p-3 rounded-lg bg-blue-50 border border-blue-200">
-                      <h4 className="font-medium text-blue-800 mb-1">Study Streak</h4>
-                      <p className="text-sm text-blue-700">
-                        You're on a {userData.streak}-day streak. Keep it up!
-                      </p>
-                    </div>
-                    <div className="p-3 rounded-lg bg-purple-50 border border-purple-200">
-                      <h4 className="font-medium text-purple-800 mb-1">Most Active Subject</h4>
-                      <p className="text-sm text-purple-700">
-                        Psychology accounts for 40% of your study time this week.
-                      </p>
-                    </div>
-                    <div className="p-3 rounded-lg bg-orange-50 border border-orange-200">
-                      <h4 className="font-medium text-orange-800 mb-1">Recommendation</h4>
-                      <p className="text-sm text-orange-700">
-                        Try reviewing Mathematics - it's been 3 days since your last session.
-                      </p>
-                    </div>
+                  <CardContent>
+                    {recentScripts.length > 0 ? (
+                      <div className="space-y-3">
+                        {recentScripts.map((script) => (
+                          <div key={script.id} className="flex items-center gap-3 p-3 rounded-lg hover:bg-accent/50 transition-colors">
+                            <div className="w-10 h-10 rounded bg-purple-100 flex items-center justify-center">
+                              <FileText className="w-5 h-5 text-purple-600" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium truncate">{script.title}</p>
+                              <div className="flex gap-2 mt-1">
+                                <Badge variant="outline" className="text-xs">
+                                  {script.detail_level}
+                                </Badge>
+                                <Badge variant="outline" className="text-xs">
+                                  {script.difficulty}
+                                </Badge>
+                              </div>
+                              <p className="text-xs text-muted-foreground">
+                                Created {getRelativeTime(script.created_at)}
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-center py-6">
+                        <FileText className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
+                        <p className="text-muted-foreground">No scripts yet</p>
+                        <Button size="sm" className="mt-3" onClick={() => navigate('/scripts')}>
+                          Create Your First Script
+                        </Button>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               </div>

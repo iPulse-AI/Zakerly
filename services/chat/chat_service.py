@@ -174,7 +174,7 @@ Highlight any:
 - Always maintain accuracy and cite your sources
 
 **CITATION REQUIREMENT:**
-End your response with: `(Source: Internal Knowledge Base)` or `(Source: Web Search)` or `(Source: Internal Knowledge Base + Web Search)` if you used both."""),
+End your response with: `(Source: Internal Knowledge Base)` or `(Source: Web Search)`. Use only one source - do not mix both."""),
             MessagesPlaceholder(variable_name="chat_history"),
             ("human", "book_title: {book_title}\nmessage: {user_message}"),
             MessagesPlaceholder(variable_name="agent_scratchpad")
@@ -487,7 +487,7 @@ Highlight any:
 - Always maintain accuracy and cite your sources
 
 **CITATION REQUIREMENT:**
-End your response with: `(Source: Internal Knowledge Base)` or `(Source: Web Search)` or `(Source: Internal Knowledge Base + Web Search)` if you used both."""),
+End your response with: `(Source: Internal Knowledge Base)` or `(Source: Web Search)`. Use only one source - do not mix both."""),
                 MessagesPlaceholder(variable_name="chat_history"),
                 ("human", "{input}"),
                 MessagesPlaceholder(variable_name="agent_scratchpad")
@@ -870,7 +870,7 @@ End your response with: `(Source: Internal Knowledge Base)` or `(Source: Web Sea
             
             # Enhanced question generation prompt for comprehensive exams
             question_prompt = ChatPromptTemplate.from_messages([
-                ("system", f"""You are a professional exam author and educational assessment specialist. Generate high-quality exam questions based STRICTLY on the provided content.
+                ("system", f"""You are a professional exam author and educational assessment specialist. Generate high-quality technical exam questions based STRICTLY on the provided content.
 
 COMPREHENSIVE EXAM SPECIFICATIONS:
 - {difficulty_constraint}
@@ -885,6 +885,24 @@ DISTRIBUTION GUIDELINES:
 - If multiple question types specified, vary the types throughout
 - Ensure each question tests different aspects of the content
 
+CRITICAL CONTENT FOCUS REQUIREMENTS:
+- ONLY create questions about TECHNICAL CONTENT, concepts, theories, procedures, and subject matter
+- Write questions as if they are from a professional certification exam or university exam
+- Questions must be direct, clear, and professional without any meta-references
+
+STRICTLY FORBIDDEN QUESTION ELEMENTS:
+- DO NOT mention chapters, sections, or book structure ("Chapter 2", "Section 1.3", etc.)
+- DO NOT use phrases like "According to the text", "Based on the provided text", "The book states", "As described in the book"
+- DO NOT ask about book organization, preface, introduction, or meta-information
+- DO NOT ask "What does the book teach" or "What does the book aim to"
+- DO NOT reference the source material in questions
+
+REQUIRED QUESTION STYLE:
+- Write questions in direct, technical language
+- Ask about concepts, processes, tools, and techniques directly
+- Use professional terminology appropriate for the field
+- Questions should sound like they come from industry certification exams
+
 Your response MUST be a JSON array of question objects. Each question object must have:
 - "difficulty": one of "easy", "medium", or "hard" (matching the specified levels)
 - "type": one of "multiple_choice_single_answer", "true_false", or "open_ended_question" (matching specified types)
@@ -893,21 +911,45 @@ Your response MUST be a JSON array of question objects. Each question object mus
 - "answer": The correct answer as a STRING (for true/false use "True" or "False", for multiple choice use the exact option text)
 
 EXAM QUESTION QUALITY STANDARDS:
-- Easy questions: Test basic recall, definitions, and simple comprehension (Bloom's: Remember, Understand)
-- Medium questions: Test application, analysis, and connections between concepts (Bloom's: Apply, Analyze)  
-- Hard questions: Test evaluation, synthesis, and critical thinking (Bloom's: Evaluate, Create)
-- Multiple choice: Provide 4 plausible options with clear distinctions, only one correct answer
-- True/False: Create statements that are unambiguously true or false based on content
-- Open-ended: Ask for explanations, comparisons, applications, or detailed analysis
+- Easy questions: Test basic recall of technical definitions, concepts, and simple comprehension
+- Medium questions: Test application of concepts, analysis of technical scenarios, and connections between ideas
+- Hard questions: Test evaluation of solutions, synthesis of complex concepts, and critical thinking about technical problems
+- Multiple choice: Provide 4 plausible technical options with clear distinctions, only one correct answer
+- True/False: Create statements about technical facts that are unambiguously true or false
+- Open-ended: Ask for explanations of technical concepts, comparisons of methods, applications of principles
+
+PROFESSIONAL QUESTION EXAMPLES (GOOD):
+- "What is the primary function of Apache Kafka in data streaming?"
+- "Which algorithm is most efficient for sorting large datasets?"
+- "What are the key advantages of using Docker containers?"
+- "How does load balancing improve system performance?"
+- "What happens when a database transaction fails?"
+- "Which data structure provides O(1) lookup time?"
+
+AVOID THESE PHRASES AND PATTERNS (BAD):
+- "According to the text/book/chapter..."
+- "Based on the provided information..."
+- "What tools are mentioned in Chapter X?"
+- "What does the book teach about..."
+- "As described in the book..."
+- "Considering the provided text..."
+- "The book aims to..."
+- "What is discussed in Section X?"
+
+WRITE QUESTIONS LIKE A PROFESSIONAL EXAM:
+- Direct technical questions about concepts and tools
+- No reference to source material or book structure
+- Professional, industry-standard language
+- Focus on practical knowledge and understanding
 
 CRITICAL REQUIREMENTS:
 - The "answer" field must ALWAYS be a string
-- Base ALL questions strictly on the provided content only
-- Make questions appropriate for formal academic examination
-- Ensure clear, unambiguous wording with no ambiguity
-- Questions must be answerable from the given content
-- No questions about content not present in the provided text"""),
-                ("human", "Content: {content}\nTopic: {topic}\nGenerate {count} comprehensive exam questions following ALL specifications above.")
+- Base questions on technical concepts from the content
+- Make questions appropriate for professional certification or academic exams
+- Ensure clear, unambiguous wording
+- Questions must test actual technical understanding
+- NO meta-references to source material whatsoever"""),
+                ("human", "Content: {content}\nTopic: {topic}\nGenerate {count} professional technical exam questions. Write each question as if it appears on a certification exam or university test. Focus ONLY on technical concepts and avoid any reference to source material.")
             ])
             
             chain = question_prompt | self.get_current_llm() | StrOutputParser()
@@ -1448,3 +1490,220 @@ Scope: {scope}
         except Exception as e:
             logger.error(f"Error cleaning up expired memories: {e}")
             return {"status": "error", "message": str(e)}
+
+    # Lecture Scripts methods
+    async def create_lecture_script(self, user_id: str, request) -> dict:
+        """Create a new lecture script"""
+        try:
+            # Insert into database
+            query = """
+                INSERT INTO lecture_scripts 
+                (user_id, book_id, title, scope, specific_topics, detail_level, difficulty, duration, content)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                RETURNING id, user_id, book_id, title, scope, specific_topics, detail_level, difficulty, duration, content, created_at, updated_at
+            """
+            
+            result = await self.db.execute_query(
+                query,
+                user_id, request.book_id, request.title, request.scope,
+                request.specific_topics, request.detail_level, request.difficulty,
+                request.duration, request.content
+            )
+            
+            if result:
+                row = result[0]
+                return {
+                    "id": str(row["id"]),
+                    "user_id": str(row["user_id"]),
+                    "book_id": row["book_id"],
+                    "title": row["title"],
+                    "scope": row["scope"],
+                    "specific_topics": row["specific_topics"],
+                    "detail_level": row["detail_level"],
+                    "difficulty": row["difficulty"],
+                    "duration": row["duration"],
+                    "content": row["content"],
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"]
+                }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error creating lecture script: {e}")
+            raise e
+
+    async def get_lecture_script(self, script_id: str, user_id: str) -> dict:
+        """Get a specific lecture script by ID"""
+        try:
+            query = """
+                SELECT id, user_id, book_id, title, scope, specific_topics, detail_level, difficulty, duration, content, created_at, updated_at
+                FROM lecture_scripts
+                WHERE id = $1 AND user_id = $2
+            """
+            
+            result = await self.db.execute_query(query, script_id, user_id)
+            
+            if result:
+                row = result[0]
+                return {
+                    "id": str(row["id"]),
+                    "user_id": str(row["user_id"]),
+                    "book_id": row["book_id"],
+                    "title": row["title"],
+                    "scope": row["scope"],
+                    "specific_topics": row["specific_topics"],
+                    "detail_level": row["detail_level"],
+                    "difficulty": row["difficulty"],
+                    "duration": row["duration"],
+                    "content": row["content"],
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"]
+                }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting lecture script {script_id}: {e}")
+            raise e
+
+    async def get_user_scripts(self, user_id: str) -> List[dict]:
+        """Get all lecture scripts for a user"""
+        try:
+            query = """
+                SELECT ls.id, ls.user_id, ls.book_id, ls.title, ls.scope, ls.specific_topics, 
+                       ls.detail_level, ls.difficulty, ls.duration, ls.content, ls.created_at, ls.updated_at,
+                       b.title as book_title
+                FROM lecture_scripts ls
+                LEFT JOIN books b ON ls.book_id = b.id
+                WHERE ls.user_id = $1
+                ORDER BY ls.created_at DESC
+            """
+            
+            result = await self.db.execute_query(query, user_id)
+            
+            scripts = []
+            if result:
+                for row in result:
+                    scripts.append({
+                        "id": str(row["id"]),
+                        "user_id": str(row["user_id"]),
+                        "book_id": row["book_id"],
+                        "title": row["title"],
+                        "scope": row["scope"],
+                        "specific_topics": row["specific_topics"],
+                        "detail_level": row["detail_level"],
+                        "difficulty": row["difficulty"],
+                        "duration": row["duration"],
+                        "content": row["content"],
+                        "created_at": row["created_at"],
+                        "updated_at": row["updated_at"],
+                        "book_title": row["book_title"]
+                    })
+            
+            return scripts
+            
+        except Exception as e:
+            logger.error(f"Error getting user scripts: {e}")
+            raise e
+
+    async def update_lecture_script(self, script_id: str, user_id: str, request) -> dict:
+        """Update a lecture script"""
+        try:
+            # Build dynamic update query
+            update_fields = []
+            values = []
+            param_count = 1
+            
+            if request.title is not None:
+                update_fields.append(f"title = ${param_count}")
+                values.append(request.title)
+                param_count += 1
+                
+            if request.content is not None:
+                update_fields.append(f"content = ${param_count}")
+                values.append(request.content)
+                param_count += 1
+                
+            if request.scope is not None:
+                update_fields.append(f"scope = ${param_count}")
+                values.append(request.scope)
+                param_count += 1
+                
+            if request.specific_topics is not None:
+                update_fields.append(f"specific_topics = ${param_count}")
+                values.append(request.specific_topics)
+                param_count += 1
+                
+            if request.detail_level is not None:
+                update_fields.append(f"detail_level = ${param_count}")
+                values.append(request.detail_level)
+                param_count += 1
+                
+            if request.difficulty is not None:
+                update_fields.append(f"difficulty = ${param_count}")
+                values.append(request.difficulty)
+                param_count += 1
+                
+            if request.duration is not None:
+                update_fields.append(f"duration = ${param_count}")
+                values.append(request.duration)
+                param_count += 1
+            
+            if not update_fields:
+                # Nothing to update, return existing script
+                return await self.get_lecture_script(script_id, user_id)
+            
+            update_fields.append(f"updated_at = ${param_count}")
+            values.append(datetime.utcnow())
+            param_count += 1
+            
+            # Add WHERE clause parameters
+            values.extend([script_id, user_id])
+            
+            query = f"""
+                UPDATE lecture_scripts 
+                SET {', '.join(update_fields)}
+                WHERE id = ${param_count} AND user_id = ${param_count + 1}
+                RETURNING id, user_id, book_id, title, scope, specific_topics, detail_level, difficulty, duration, content, created_at, updated_at
+            """
+            
+            result = await self.db.execute_query(query, *values)
+            
+            if result:
+                row = result[0]
+                return {
+                    "id": str(row["id"]),
+                    "user_id": str(row["user_id"]),
+                    "book_id": row["book_id"],
+                    "title": row["title"],
+                    "scope": row["scope"],
+                    "specific_topics": row["specific_topics"],
+                    "detail_level": row["detail_level"],
+                    "difficulty": row["difficulty"],
+                    "duration": row["duration"],
+                    "content": row["content"],
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"]
+                }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error updating lecture script {script_id}: {e}")
+            raise e
+
+    async def delete_lecture_script(self, script_id: str, user_id: str) -> bool:
+        """Delete a lecture script"""
+        try:
+            query = """
+                DELETE FROM lecture_scripts 
+                WHERE id = $1 AND user_id = $2
+            """
+            
+            result = await self.db.execute_query(query, script_id, user_id)
+            return result is not None
+            
+        except Exception as e:
+            logger.error(f"Error deleting lecture script {script_id}: {e}")
+            raise e

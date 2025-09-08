@@ -7,13 +7,15 @@ from datetime import datetime
 import logging
 from contextlib import asynccontextmanager
 from fastapi import Response
+from typing import List
 
 # Add shared modules to path
 sys.path.append('/app/shared')
 
 from models import (
     ChatRequest, ChatResponse, QuestionGenerationRequest, QuestionResponse,
-    LectureRequest, HealthCheck, ChatSessionModel
+    LectureRequest, LectureScript, LectureScriptRequest, LectureScriptUpdate,
+    HealthCheck, ChatSessionModel
 )
 from database import get_database, DatabaseManager
 from utils import setup_logging, get_redis, generate_session_id
@@ -286,6 +288,89 @@ async def cleanup_expired_memories(
         return result
     except Exception as e:
         logger.error(f"Error cleaning up expired memories: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+# Lecture Scripts endpoints
+@app.post("/scripts")
+async def create_script(
+    request: LectureScriptRequest,
+    user_id: str,
+    chat_service: ChatService = Depends(get_chat_service)
+):
+    """Create a new lecture script"""
+    try:
+        script = await chat_service.create_lecture_script(user_id, request)
+        return script
+    except Exception as e:
+        logger.error(f"Error creating script: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.get("/scripts/{script_id}")
+async def get_script(
+    script_id: str,
+    user_id: str,
+    chat_service: ChatService = Depends(get_chat_service)
+):
+    """Get a specific lecture script by ID"""
+    try:
+        script = await chat_service.get_lecture_script(script_id, user_id)
+        if not script:
+            raise HTTPException(status_code=404, detail="Script not found")
+        return script
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting script {script_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.get("/users/{user_id}/scripts")
+async def get_user_scripts(
+    user_id: str,
+    chat_service: ChatService = Depends(get_chat_service)
+):
+    """Get all lecture scripts for a user"""
+    try:
+        scripts = await chat_service.get_user_scripts(user_id)
+        return scripts
+    except Exception as e:
+        logger.error(f"Error getting user scripts: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.put("/scripts/{script_id}")
+async def update_script(
+    script_id: str,
+    request: LectureScriptUpdate,
+    user_id: str,
+    chat_service: ChatService = Depends(get_chat_service)
+):
+    """Update a lecture script"""
+    try:
+        script = await chat_service.update_lecture_script(script_id, user_id, request)
+        if not script:
+            raise HTTPException(status_code=404, detail="Script not found")
+        return script
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating script {script_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.delete("/scripts/{script_id}")
+async def delete_script(
+    script_id: str,
+    user_id: str,
+    chat_service: ChatService = Depends(get_chat_service)
+):
+    """Delete a lecture script"""
+    try:
+        success = await chat_service.delete_lecture_script(script_id, user_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Script not found")
+        return {"message": "Script deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting script {script_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { Header } from '@/components/ui/header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,7 +10,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { BookOpen, Settings, ArrowLeft, Loader2 } from 'lucide-react';
+import { BookOpen, Settings, Loader2 } from 'lucide-react';
 import { BooksService } from '@/lib/services';
 import type { Book as BookType, Category } from '@/lib/types';
 
@@ -167,33 +168,22 @@ export default function ExamSetup() {
     navigate(`/exam-view?${params.toString()}`);
   };
 
-  const handleBack = () => {
-    navigate('/books');
-  };
-
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center gap-4">
-        <Button 
-          variant="outline" 
-          size="sm" 
-          onClick={handleBack}
-          className="flex items-center gap-2"
-        >
-          <ArrowLeft size={16} />
-          Back to Books
-        </Button>
-        <div className="flex items-center gap-3">
-          <BookOpen className="text-blue-600" size={28} />
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">Exam Setup</h1>
-            <p className="text-gray-600">
-              {examConfig.bookTitle ? `Book: ${examConfig.bookTitle}` : 'Select a book to continue'}
-            </p>
+    <div className="min-h-screen bg-background">
+      <Header />
+      <div className="container mx-auto p-6 space-y-6">
+        {/* Header */}
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            <BookOpen className="text-blue-600" size={28} />
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">Exam Setup</h1>
+              <p className="text-gray-600">
+                {examConfig.bookTitle ? `Book: ${examConfig.bookTitle}` : 'Select a book to continue'}
+              </p>
+            </div>
           </div>
         </div>
-      </div>
 
       {/* Error Alert */}
       {error && (
@@ -430,6 +420,7 @@ export default function ExamSetup() {
             'Generate Exam Preview'
           )}
         </Button>
+      </div>
       </div>
     </div>
   );

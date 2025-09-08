@@ -105,6 +105,53 @@ class LectureRequest(BaseModel):
     specific_topics: Optional[str] = None
     detail_level: Optional[str] = "overview"  # 'overview', 'detailed', 'in-depth'
 
+class LectureScript(BaseModel):
+    id: Optional[str] = None
+    user_id: str
+    book_id: int
+    title: str
+    scope: str = Field(..., description="Scope: whole_book or specific_topics")
+    specific_topics: Optional[str] = None
+    detail_level: str = Field(..., description="Detail level: overview, detailed, or in-depth")
+    difficulty: str = Field(..., description="Difficulty: beginner, intermediate, or advanced")
+    duration: int = Field(..., description="Duration in minutes")
+    content: str
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    
+    @field_validator('id', mode='before')
+    @classmethod
+    def convert_uuid_to_string(cls, v):
+        if isinstance(v, uuid.UUID):
+            return str(v)
+        return v
+    
+    @field_validator('user_id', mode='before')
+    @classmethod
+    def convert_user_id_to_string(cls, v):
+        if isinstance(v, uuid.UUID):
+            return str(v)
+        return v
+
+class LectureScriptRequest(BaseModel):
+    book_id: int
+    title: str
+    scope: str = Field(..., description="Scope: whole_book or specific_topics")
+    specific_topics: Optional[str] = None
+    detail_level: str = Field(..., description="Detail level: overview, detailed, or in-depth")
+    difficulty: str = Field(..., description="Difficulty: beginner, intermediate, or advanced")
+    duration: int = Field(..., description="Duration in minutes")
+    content: str
+
+class LectureScriptUpdate(BaseModel):
+    title: Optional[str] = None
+    content: Optional[str] = None
+    scope: Optional[str] = None
+    specific_topics: Optional[str] = None
+    detail_level: Optional[str] = None
+    difficulty: Optional[str] = None
+    duration: Optional[int] = None
+
 class HealthCheck(BaseModel):
     status: str
     timestamp: datetime

@@ -1,6 +1,19 @@
 -- Enable pgvector extension
 CREATE EXTENSION IF NOT EXISTS vector;
 
+-- Create users table for authentication
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    full_name VARCHAR(255) NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create indexes for users table
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+
 -- Create categories table
 CREATE TABLE IF NOT EXISTS category (
     id SERIAL PRIMARY KEY,
@@ -37,11 +50,14 @@ CREATE TABLE IF NOT EXISTS books (
 -- Create chat sessions table
 CREATE TABLE IF NOT EXISTS chat_sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id VARCHAR(255) NOT NULL,
+    user_id UUID NOT NULL,
     book_id INTEGER NOT NULL,
     session_name VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_user
+        FOREIGN KEY (user_id)
+        REFERENCES users(id),
     CONSTRAINT fk_book
         FOREIGN KEY (book_id)
         REFERENCES books(id)
@@ -77,6 +93,28 @@ CREATE TABLE IF NOT EXISTS session_memory (
         REFERENCES chat_sessions(id) ON DELETE CASCADE
 );
 
+-- Create lecture scripts table
+CREATE TABLE IF NOT EXISTS lecture_scripts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    book_id INTEGER NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    scope VARCHAR(50) NOT NULL CHECK (scope IN ('whole_book', 'specific_topics')),
+    specific_topics TEXT,
+    detail_level VARCHAR(50) NOT NULL CHECK (detail_level IN ('overview', 'detailed', 'in-depth')),
+    difficulty VARCHAR(50) NOT NULL CHECK (difficulty IN ('beginner', 'intermediate', 'advanced')),
+    duration INTEGER NOT NULL, -- duration in minutes
+    content TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_script_user
+        FOREIGN KEY (user_id)
+        REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_script_book
+        FOREIGN KEY (book_id)
+        REFERENCES books(id) ON DELETE CASCADE
+);
+
 -- Create indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_books_category_id ON books(category_id);
 CREATE INDEX IF NOT EXISTS idx_books_file_hash ON books(file_hash);
@@ -95,6 +133,11 @@ BEGIN
     RETURN NEW;
 END;
 $$ language 'plpgsql';
+
+-- Create trigger for users
+CREATE TRIGGER update_users_updated_at 
+    BEFORE UPDATE ON users 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Create trigger for chat_sessions
 CREATE TRIGGER update_chat_sessions_updated_at 

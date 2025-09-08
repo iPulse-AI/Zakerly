@@ -99,6 +99,25 @@ services:
     networks:
       - zakerly_network
 
+  # Authentication Service
+  auth-service:
+    build:
+      context: .
+      dockerfile: ./services/auth/Dockerfile
+    container_name: zakerly_auth
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://zakerly_user:zakerly_password@postgres:5432/zakerly_db
+      - JWT_SECRET=${JWT_SECRET:-your-secret-key-change-in-production}
+    ports:
+      - "8003:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - zakerly_network
+
   # API Gateway
   api-gateway:
     build:
@@ -108,12 +127,14 @@ services:
     environment:
       - INGESTION_SERVICE_URL=http://ingestion-service:8000
       - CHAT_SERVICE_URL=http://chat-service:8000
+      - AUTH_SERVICE_URL=http://auth-service:8000
       - REDIS_URL=redis://redis:6379
     ports:
       - "8000:8000"
     depends_on:
       - ingestion-service
       - chat-service
+      - auth-service
     networks:
       - zakerly_network
 

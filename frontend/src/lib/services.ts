@@ -7,6 +7,9 @@ import type {
   QuestionGenerationRequest,
   QuestionResponse,
   LectureRequest,
+  LectureScript,
+  LectureScriptRequest,
+  LectureScriptUpdate,
   ChatSession,
   ChatMessage,
   SystemStatus,
@@ -108,6 +111,33 @@ export class SystemService {
 
   static async getStatus(): Promise<SystemStatus> {
     return apiClient.get<SystemStatus>(API_ENDPOINTS.STATUS);
+  }
+}
+
+// Scripts Service
+export class ScriptsService {
+  static async createScript(userId: string, request: LectureScriptRequest): Promise<LectureScript> {
+    const endpoint = `${API_ENDPOINTS.SCRIPTS}?user_id=${userId}`;
+    return apiClient.post<LectureScript>(endpoint, request);
+  }
+
+  static async getScript(scriptId: string, userId: string): Promise<LectureScript> {
+    const endpoint = `${API_ENDPOINTS.SCRIPT_BY_ID(scriptId)}?user_id=${userId}`;
+    return apiClient.get<LectureScript>(endpoint);
+  }
+
+  static async getUserScripts(userId: string): Promise<LectureScript[]> {
+    return apiClient.get<LectureScript[]>(API_ENDPOINTS.USER_SCRIPTS(userId));
+  }
+
+  static async updateScript(scriptId: string, userId: string, request: LectureScriptUpdate): Promise<LectureScript> {
+    const endpoint = `${API_ENDPOINTS.SCRIPT_BY_ID(scriptId)}?user_id=${userId}`;
+    return apiClient.put<LectureScript>(endpoint, request);
+  }
+
+  static async deleteScript(scriptId: string, userId: string): Promise<{ message: string }> {
+    const endpoint = `${API_ENDPOINTS.SCRIPT_BY_ID(scriptId)}?user_id=${userId}`;
+    return apiClient.delete<{ message: string }>(endpoint);
   }
 }
 

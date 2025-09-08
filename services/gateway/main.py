@@ -67,6 +67,7 @@ app.add_middleware(
 # Service URLs
 INGESTION_SERVICE_URL = os.getenv("INGESTION_SERVICE_URL", "http://ingestion-service:8000")
 CHAT_SERVICE_URL = os.getenv("CHAT_SERVICE_URL", "http://chat-service:8000")
+AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8000")
 
 class RateLimiter:
     """Simple rate limiter using Redis"""
@@ -131,6 +132,8 @@ async def forward_request(
                 response = await client.post(url, files=files, data=data, params=params)
             else:
                 response = await client.post(url, json=data, params=params)
+        elif method == "PUT":
+            response = await client.put(url, json=data, params=params)
         elif method == "DELETE":
             response = await client.delete(url)
         else:
@@ -441,10 +444,215 @@ async def get_system_status():
         except:
             status["services"]["chat"] = "unhealthy"
         
+        # Check auth service
+        try:
+            await forward_request(AUTH_SERVICE_URL, "/health", method="GET")
+            status["services"]["auth"] = "healthy"
+        except:
+            status["services"]["auth"] = "unhealthy"
+        
         return status
         
     except Exception as e:
         logger.error(f"Error getting system status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Authentication Endpoints
+@app.post("/api/v1/auth/signup")
+async def signup(request: Request):
+    """User signup"""
+    try:
+        data = await request.json()
+        result = await forward_request(
+            AUTH_SERVICE_URL,
+            "/signup",
+            method="POST",
+            data=data
+        )
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in signup endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/v1/auth/login")
+async def login(request: Request):
+    """User login"""
+    try:
+        data = await request.json()
+        result = await forward_request(
+            AUTH_SERVICE_URL,
+            "/login",
+            method="POST",
+            data=data
+        )
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in login endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/auth/me", dependencies=[Depends(check_rate_limit)])
+async def get_current_user(request: Request):
+    """Get current user info"""
+    try:
+        # Forward the authorization header
+        headers = {}
+        if "authorization" in request.headers:
+            headers["authorization"] = request.headers["authorization"]
+        
+        client = app.state.http_client
+        response = await client.get(
+            f"{AUTH_SERVICE_URL}/me",
+            headers=headers
+        )
+        response.raise_for_status()
+        return response.json()
+        
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error getting current user: {e}")
+        raise HTTPException(
+            status_code=e.response.status_code,
+            detail=f"Auth service error: {e.response.text}"
+        )
+    except Exception as e:
+        logger.error(f"Error getting current user: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/v1/auth/verify-token", dependencies=[Depends(check_rate_limit)])
+async def verify_token(request: Request):
+    """Verify authentication token"""
+    try:
+        # Forward the authorization header
+        headers = {}
+        if "authorization" in request.headers:
+            headers["authorization"] = request.headers["authorization"]
+        
+        client = app.state.http_client
+        response = await client.post(
+            f"{AUTH_SERVICE_URL}/verify-token",
+            headers=headers
+        )
+        response.raise_for_status()
+        return response.json()
+        
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error verifying token: {e}")
+        raise HTTPException(
+            status_code=e.response.status_code,
+            detail=f"Auth service error: {e.response.text}"
+        )
+    except Exception as e:
+        logger.error(f"Error verifying token: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Lecture Scripts Endpoints
+@app.post("/api/v1/scripts", dependencies=[Depends(check_rate_limit)])
+async def create_script(request: Request, user_id: str):
+    """Create a new lecture script"""
+    try:
+        data = await request.json()
+        params = {"user_id": user_id}
+        
+        result = await forward_request(
+            CHAT_SERVICE_URL,
+            "/scripts",
+            method="POST",
+            data=data,
+            params=params
+        )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in create script endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/scripts/{script_id}", dependencies=[Depends(check_rate_limit)])
+async def get_script(script_id: str, user_id: str):
+    """Get a specific lecture script by ID"""
+    try:
+        params = {"user_id": user_id}
+        result = await forward_request(
+            CHAT_SERVICE_URL,
+            f"/scripts/{script_id}",
+            method="GET",
+            params=params
+        )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in get script endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/users/{user_id}/scripts", dependencies=[Depends(check_rate_limit)])
+async def get_user_scripts(user_id: str):
+    """Get all lecture scripts for a user"""
+    try:
+        result = await forward_request(
+            CHAT_SERVICE_URL,
+            f"/users/{user_id}/scripts",
+            method="GET"
+        )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in get user scripts endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/v1/scripts/{script_id}", dependencies=[Depends(check_rate_limit)])
+async def update_script(script_id: str, request: Request, user_id: str):
+    """Update a lecture script"""
+    try:
+        data = await request.json()
+        params = {"user_id": user_id}
+        
+        result = await forward_request(
+            CHAT_SERVICE_URL,
+            f"/scripts/{script_id}",
+            method="PUT",
+            data=data,
+            params=params
+        )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in update script endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/v1/scripts/{script_id}", dependencies=[Depends(check_rate_limit)])
+async def delete_script(script_id: str, user_id: str):
+    """Delete a lecture script"""
+    try:
+        params = {"user_id": user_id}
+        result = await forward_request(
+            CHAT_SERVICE_URL,
+            f"/scripts/{script_id}",
+            method="DELETE",
+            params=params
+        )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in delete script endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Error handlers
