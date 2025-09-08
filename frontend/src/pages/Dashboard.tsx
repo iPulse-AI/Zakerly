@@ -16,7 +16,6 @@ import {
   Activity,
   Plus,
   ArrowRight,
-  Brain,
   CheckCircle,
   MessageCircle,
   FileText,
@@ -263,14 +262,6 @@ export default function Dashboard() {
       color: "text-green-600", 
       bgColor: "bg-green-100",
       action: () => navigate('/chat')
-    },
-    { 
-      label: "AI Interactions", 
-      value: stats.totalChats, 
-      icon: Brain, 
-      color: "text-orange-600", 
-      bgColor: "bg-orange-100",
-      action: () => navigate('/chat')
     }
   ];
 
@@ -327,7 +318,7 @@ export default function Dashboard() {
           </div>
 
           {/* Stats Overview */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
             {statCards.map((stat, index) => (
               <Card 
                 key={index} 
@@ -351,7 +342,7 @@ export default function Dashboard() {
 
           {/* Quick Actions */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-            <Card className="hover:shadow-lg transition-all duration-200 cursor-pointer group" onClick={() => navigate('/add-book')}>
+            <Card className="hover:shadow-lg transition-all duration-200 cursor-pointer group" onClick={() => navigate('/books/add')}>
               <CardContent className="pt-6">
                 <div className="flex items-center gap-4">
                   <div className="w-12 h-12 rounded-lg bg-blue-100 flex items-center justify-center group-hover:scale-110 transition-transform">
@@ -385,7 +376,7 @@ export default function Dashboard() {
               <CardContent className="pt-6">
                 <div className="flex items-center gap-4">
                   <div className="w-12 h-12 rounded-lg bg-green-100 flex items-center justify-center group-hover:scale-110 transition-transform">
-                    <Brain className="w-6 h-6 text-green-600" />
+                    <MessageCircle className="w-6 h-6 text-green-600" />
                   </div>
                   <div>
                     <h3 className="font-semibold">Start Chat</h3>
@@ -572,7 +563,7 @@ export default function Dashboard() {
                       <div className="text-center py-6">
                         <BookOpen className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
                         <p className="text-muted-foreground">No books yet</p>
-                        <Button size="sm" className="mt-3" onClick={() => navigate('/add-book')}>
+                        <Button size="sm" className="mt-3" onClick={() => navigate('/books/add')}>
                           Add Your First Book
                         </Button>
                       </div>
