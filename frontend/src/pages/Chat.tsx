@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Send, BookOpen, Download, Copy, ExternalLink, Loader2, AlertCircle, ArrowLeft, Plus, History } from 'lucide-react';
+import { Send, BookOpen, Download, Copy, ExternalLink, Loader2, AlertCircle, ArrowLeft, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { BooksService, ChatService, SessionService, Utils } from '@/lib/services';
 import type { Book as BookType, ChatMessage, ChatSession, ChatResponse, Category, QuestionGenerationRequest } from '@/lib/types';
@@ -440,19 +440,6 @@ export default function Chat() {
                         >
                           <Plus className="w-4 h-4" />
                           NEW CHAT
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            // Navigate to session history or show sessions list
-                            navigate('/dashboard');
-                          }}
-                          className="flex items-center gap-2"
-                          title="View Chat History"
-                        >
-                          <History className="w-4 h-4" />
-                          HISTORY
                         </Button>
                         <Button
                           variant="outline"
