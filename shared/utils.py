@@ -46,18 +46,7 @@ def sanitize_title_for_table(title: str) -> str:
     
     return sanitized
 
-def extract_category_id(subject: str) -> int:
-    """Map subject to category ID"""
-    category_mapping = {
-        "math": 1,
-        "science": 2,
-        "physics": 3,
-        "chemistry": 4,
-        "history": 5,
-        "geology": 6,
-        "general": 7
-    }
-    return category_mapping.get(subject.lower(), 7)  # Default to 'general'
+
 
 class RedisManager:
     def __init__(self, redis_url: str = None):

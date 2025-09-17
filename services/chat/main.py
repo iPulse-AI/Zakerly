@@ -87,7 +87,7 @@ async def chat(
 ):
     """Handle chat requests"""
     try:
-        logger.info(f"Chat request for book: {request.book_title}, session: {request.session_id}")
+        logger.info(f"Chat request for curriculum: {request.curriculum}, session: {request.session_id}")
         
         response = await chat_service.handle_chat(request)
         
@@ -140,13 +140,22 @@ async def generate_lecture(
 @app.post("/sessions", response_model=ChatSessionModel)
 async def create_session(
     user_id: str,
-    book_title: str,
+    curriculum_name: str = None,
+    book_title: str = None,
     session_name: str = None,
     chat_service: ChatService = Depends(get_chat_service)
 ):
-    """Create new chat session"""
+    """Create new chat session - supports both curriculum-based and book-based sessions"""
     try:
-        session = await chat_service.create_session(user_id, book_title, session_name)
+        if curriculum_name:
+            # Create curriculum-based session
+            session = await chat_service.create_curriculum_session(user_id, curriculum_name, session_name)
+        elif book_title:
+            # Create book-based session (legacy support)
+            session = await chat_service.create_session(user_id, book_title, session_name)
+        else:
+            raise HTTPException(status_code=400, detail="Either curriculum_name or book_title must be provided")
+        
         return session
         
     except HTTPException:

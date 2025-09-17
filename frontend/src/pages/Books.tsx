@@ -17,15 +17,15 @@ import {
   Sparkles
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { BooksService, Utils } from '@/lib/services';
-import type { Book as BookType, Category } from '@/lib/types';
+import { BooksService, CurriculumService, Utils } from '@/lib/services';
+import type { Book as BookType, Curriculum } from '@/lib/types';
 
 export default function Books() {
   const navigate = useNavigate();
   const [books, setBooks] = useState<BookType[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
+  const [curriculums, setCurriculums] = useState<Curriculum[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterCategory, setFilterCategory] = useState('all');
+  const [filterCurriculum, setFilterCurriculum] = useState('all');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -39,13 +39,13 @@ export default function Books() {
       setIsLoading(true);
       setError('');
       
-      const [booksData, categoriesData] = await Promise.all([
+      const [booksData, curriculumsData] = await Promise.all([
         BooksService.getBooks(),
-        BooksService.getCategories()
+        CurriculumService.getCurriculums()
       ]);
       
       setBooks(booksData);
-      setCategories(categoriesData);
+      setCurriculums(curriculumsData);
     } catch (err) {
       console.error('Error loading data:', err);
       setError(err instanceof Error ? err.message : 'Failed to load books');
@@ -57,14 +57,15 @@ export default function Books() {
   const filteredBooks = books.filter(book => {
     const matchesSearch = book.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          (book.author && book.author.toLowerCase().includes(searchTerm.toLowerCase()));
-    const matchesCategory = filterCategory === 'all' || book.category_id === parseInt(filterCategory);
     
-    return matchesSearch && matchesCategory;
+    const matchesFilter = filterCurriculum === 'all' || book.curriculum_id === parseInt(filterCurriculum);
+    
+    return matchesSearch && matchesFilter;
   });
 
-  const getCategoryName = (categoryId: number): string => {
-    const category = categories.find(cat => cat.id === categoryId);
-    return category ? category.name : Utils.getCategoryName(categoryId);
+  const getCurriculumName = (curriculumId: number): string => {
+    const curriculum = curriculums.find(curr => curr.id === curriculumId);
+    return curriculum ? curriculum.name : 'Unknown Curriculum';
   };
 
   const formatDate = (dateString: string): string => {
@@ -133,29 +134,46 @@ export default function Books() {
           {/* Filters and Search */}
           <Card className="mb-6">
             <CardContent className="pt-6">
-              <div className="flex flex-col md:flex-row gap-4">
-                <div className="flex-1 relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search books by title or author..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-10"
-                  />
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-col md:flex-row gap-4">
+                  <div className="flex-1 relative">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search books by title or author..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="pl-10"
+                    />
+                  </div>
+                  
                 </div>
-                <Select value={filterCategory} onValueChange={setFilterCategory}>
-                  <SelectTrigger className="w-full md:w-48">
-                    <SelectValue placeholder="Filter by category" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Categories</SelectItem>
-                    {categories.map(category => (
-                      <SelectItem key={category.id} value={category.id.toString()}>
-                        {category.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+
+                {/* Curriculum Filter */}
+                <div className="flex justify-end">
+                  <Select value={filterCurriculum} onValueChange={setFilterCurriculum}>
+                    <SelectTrigger className="w-full md:w-64">
+                      <SelectValue placeholder="Filter by curriculum" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Curriculums</SelectItem>
+                      {curriculums.map(curriculum => (
+                        <SelectItem key={curriculum.id} value={curriculum.id.toString()}>
+                          <div className="flex flex-col">
+                            <span>{curriculum.name}</span>
+                            {curriculum.description && (
+                              <span className="text-xs text-muted-foreground">
+                                {curriculum.description.length > 50 
+                                  ? curriculum.description.substring(0, 50) + '...'
+                                  : curriculum.description
+                                }
+                              </span>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -174,9 +192,9 @@ export default function Books() {
               <CardContent className="pt-6">
                 <div className="text-center">
                   <div className="text-2xl font-bold text-secondary">
-                    {categories.length}
+                    {curriculums.length}
                   </div>
-                  <div className="text-sm text-muted-foreground">Categories</div>
+                  <div className="text-sm text-muted-foreground">Curriculums</div>
                 </div>
               </CardContent>
             </Card>
@@ -241,7 +259,14 @@ export default function Books() {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="flex items-center justify-between text-sm">
-                      <Badge variant="secondary">{getCategoryName(book.category_id)}</Badge>
+                      <div className="flex flex-wrap gap-1">
+                        {book.curriculum_id && (
+                          <Badge variant="default" className="bg-gradient-primary text-white">
+                            <GraduationCap className="w-3 h-3 mr-1" />
+                            {getCurriculumName(book.curriculum_id)}
+                          </Badge>
+                        )}
+                      </div>
                       <div className="flex items-center gap-1 text-muted-foreground">
                         <Sparkles className="w-3 h-3" />
                         <span className="text-xs">AI Enhanced</span>

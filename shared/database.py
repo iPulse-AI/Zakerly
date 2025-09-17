@@ -64,37 +64,59 @@ class DatabaseManager:
             return await conn.fetchval(query, *args)
 
     # Book-related methods
-    async def get_categories(self) -> List[Dict[str, Any]]:
-        """Get all categories"""
-        query = "SELECT id, name, created_at FROM category ORDER BY name"
+    async def get_curriculums(self) -> List[Dict[str, Any]]:
+        """Get all curriculums"""
+        query = "SELECT id, name, description, created_by, created_at, updated_at FROM curriculum ORDER BY name"
         return await self.execute_query(query)
 
-    async def get_books_by_category(self, category_id: int) -> List[Dict[str, Any]]:
-        """Get books by category"""
+
+    
+    async def get_books_by_curriculum(self, curriculum_id: int) -> List[Dict[str, Any]]:
+        """Get books by curriculum"""
         query = """
             SELECT 
                 b.id,
-                b.category_id,
+                b.curriculum_id,
                 b.title,
                 b.author,
                 b.publication_year,
                 b.file_hash,
                 b.file_name,
                 b.created_at,
-                c.name as category_name
+                cur.name as curriculum_name
             FROM books b
-            JOIN category c ON b.category_id = c.id
-            WHERE b.category_id = $1
+            JOIN curriculum cur ON b.curriculum_id = cur.id
+            WHERE b.curriculum_id = $1
             ORDER BY b.title
         """
-        return await self.execute_query(query, category_id)
+        return await self.execute_query(query, curriculum_id)
+    
+    async def get_all_books(self) -> List[Dict[str, Any]]:
+        """Get all books with curriculum information"""
+        query = """
+            SELECT 
+                b.id,
+                b.curriculum_id,
+                b.title,
+                b.author,
+                b.publication_year,
+                b.file_hash,
+                b.file_name,
+                b.created_at,
+                cur.name as curriculum_name
+            FROM books b
+            JOIN curriculum cur ON b.curriculum_id = cur.id
+            ORDER BY b.created_at DESC
+        """
+        return await self.execute_query(query)
 
     async def get_book_by_title(self, title: str) -> Optional[Dict[str, Any]]:
         """Get book by title"""
         query = """
-            SELECT b.*, c.name as category_name
+            SELECT b.*, 
+                   cur.name as curriculum_name
             FROM books b
-            JOIN category c ON b.category_id = c.id
+            JOIN curriculum cur ON b.curriculum_id = cur.id
             WHERE b.title = $1
         """
         return await self.fetch_one(query, title)
@@ -107,14 +129,17 @@ class DatabaseManager:
 
     async def insert_book(self, book_data: Dict[str, Any]) -> int:
         """Insert new book and return ID"""
+        if 'curriculum_id' not in book_data or not book_data['curriculum_id']:
+            raise ValueError("curriculum_id is required for new book uploads")
+            
         query = """
-            INSERT INTO books (category_id, title, author, publication_year, file_hash, file_name)
+            INSERT INTO books (curriculum_id, title, author, publication_year, file_hash, file_name)
             VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING id
         """
         return await self.fetch_val(
             query,
-            book_data['category_id'],
+            book_data['curriculum_id'],
             book_data['title'],
             book_data.get('author'),
             book_data.get('publication_year'),
@@ -144,10 +169,10 @@ class DatabaseManager:
     async def get_chat_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Get chat session by ID"""
         query = """
-            SELECT cs.*, b.title as book_title, c.name as category_name
+            SELECT cs.*, b.title as book_title, cur.name as curriculum_name
             FROM chat_sessions cs
             JOIN books b ON cs.book_id = b.id
-            JOIN category c ON b.category_id = c.id
+            JOIN curriculum cur ON b.curriculum_id = cur.id
             WHERE cs.id = $1
         """
         return await self.fetch_one(query, session_id)
@@ -155,10 +180,10 @@ class DatabaseManager:
     async def get_user_sessions(self, user_id: str) -> List[Dict[str, Any]]:
         """Get all sessions for a user"""
         query = """
-            SELECT cs.*, b.title as book_title, c.name as category_name
+            SELECT cs.*, b.title as book_title, cur.name as curriculum_name
             FROM chat_sessions cs
             JOIN books b ON cs.book_id = b.id
-            JOIN category c ON b.category_id = c.id
+            JOIN curriculum cur ON b.curriculum_id = cur.id
             WHERE cs.user_id = $1
             ORDER BY cs.updated_at DESC
         """
@@ -188,6 +213,179 @@ class DatabaseManager:
         """Update session's last activity timestamp"""
         query = "UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = $1"
         await self.execute_command(query, session_id)
+    
+    # Curriculum-related methods
+    async def get_curriculum_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        """Get curriculum by name"""
+        query = "SELECT id, name, description, created_by, created_at, updated_at FROM curriculum WHERE name = $1"
+        return await self.fetch_one(query, name)
+    
+    async def get_curriculum_by_id(self, curriculum_id: int) -> Optional[Dict[str, Any]]:
+        """Get curriculum by ID"""
+        query = "SELECT id, name, description, created_by, created_at, updated_at FROM curriculum WHERE id = $1"
+        return await self.fetch_one(query, curriculum_id)
+    
+    async def create_curriculum(self, name: str, description: str = None, created_by: str = 'user') -> int:
+        """Create new curriculum and return ID"""
+        query = """
+            INSERT INTO curriculum (name, description, created_by)
+            VALUES ($1, $2, $3)
+            RETURNING id
+        """
+        curriculum_id = await self.fetch_val(query, name, description, created_by)
+        
+        # Create corresponding embedding table with correct dimension for nomic-embed-text
+        await self.create_curriculum_embedding_table(name, embedding_dimension=768)
+        
+        return curriculum_id
+    
+    async def update_curriculum(self, curriculum_id: int, name: str = None, description: str = None) -> bool:
+        """Update curriculum"""
+        if name and description:
+            query = """
+                UPDATE curriculum 
+                SET name = $1, description = $2, updated_at = CURRENT_TIMESTAMP
+                WHERE id = $3
+            """
+            result = await self.execute_command(query, name, description, curriculum_id)
+        elif name:
+            query = """
+                UPDATE curriculum 
+                SET name = $1, updated_at = CURRENT_TIMESTAMP
+                WHERE id = $2
+            """
+            result = await self.execute_command(query, name, curriculum_id)
+        elif description:
+            query = """
+                UPDATE curriculum 
+                SET description = $1, updated_at = CURRENT_TIMESTAMP
+                WHERE id = $2
+            """
+            result = await self.execute_command(query, description, curriculum_id)
+        else:
+            return False
+            
+        return "UPDATE 1" in result
+    
+    async def delete_curriculum(self, curriculum_id: int) -> bool:
+        """Delete curriculum and its embedding table"""
+        # First get curriculum name to delete embedding table
+        curriculum = await self.get_curriculum_by_id(curriculum_id)
+        if not curriculum:
+            return False
+        
+        # Delete embedding table
+        await self.drop_curriculum_embedding_table(curriculum['name'])
+        
+        # Delete curriculum
+        query = "DELETE FROM curriculum WHERE id = $1"
+        result = await self.execute_command(query, curriculum_id)
+        return "DELETE 1" in result
+    
+    async def create_curriculum_embedding_table(self, curriculum_name: str, embedding_dimension: int = 768):
+        """Create embedding table for curriculum"""
+        async with self.get_connection() as conn:
+            table_name = await conn.fetchval(
+                "SELECT create_curriculum_embedding_table($1, $2)",
+                curriculum_name, embedding_dimension
+            )
+            return table_name
+    
+    async def drop_curriculum_embedding_table(self, curriculum_name: str):
+        """Drop embedding table for curriculum"""
+        async with self.get_connection() as conn:
+            table_name = await conn.fetchval(
+                "SELECT get_curriculum_embedding_table_name($1)",
+                curriculum_name
+            )
+            await conn.execute(f'DROP TABLE IF EXISTS "{table_name}" CASCADE')
+    
+    async def get_curriculum_embedding_table_name(self, curriculum_name: str) -> str:
+        """Get embedding table name for curriculum"""
+        async with self.get_connection() as conn:
+            return await conn.fetchval(
+                "SELECT get_curriculum_embedding_table_name($1)",
+                curriculum_name
+            )
+    
+    async def insert_curriculum_embedding(self, curriculum_name: str, curriculum_id: int, book_id: int, content: str, embedding: List[float], metadata: dict = None):
+        """Insert embedding into curriculum-specific table"""
+        import json
+        
+        table_name = await self.get_curriculum_embedding_table_name(curriculum_name)
+        
+        # Convert embedding to PostgreSQL vector format
+        embedding_str = '[' + ','.join(map(str, embedding)) + ']'
+        
+        # Convert metadata to JSON string
+        metadata_json = json.dumps(metadata) if metadata else None
+        
+        async with self.get_connection() as conn:
+            await conn.execute(f"""
+                INSERT INTO "{table_name}" (curriculum_id, book_id, content, metadata, embedding)
+                VALUES ($1, $2, $3, $4, $5::vector)
+            """, curriculum_id, book_id, content, metadata_json, embedding_str)
+    
+    async def search_curriculum_embeddings(self, curriculum_name: str, query_embedding: List[float], limit: int = 6) -> List[Dict[str, Any]]:
+        """Search embeddings in curriculum-specific table"""
+        table_name = await self.get_curriculum_embedding_table_name(curriculum_name)
+        
+        # Convert embedding to PostgreSQL vector format
+        embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
+        
+        async with self.get_connection() as conn:
+            # Check if table exists
+            table_exists = await conn.fetchval("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = $1
+                )
+            """, table_name)
+            
+            if not table_exists:
+                logger.warning(f"Curriculum embedding table '{table_name}' does not exist")
+                return []
+            
+            rows = await conn.fetch(f"""
+                SELECT content, metadata, embedding <-> $1::vector as distance
+                FROM "{table_name}"
+                ORDER BY embedding <-> $1::vector
+                LIMIT $2
+            """, embedding_str, limit)
+            
+            return [{'content': row['content'], 'metadata': row['metadata'], 'distance': row['distance']} for row in rows]
+
+    async def search_book_specific_embeddings(self, curriculum_name: str, book_id: int, query_embedding: List[float], limit: int = 6) -> List[Dict[str, Any]]:
+        """Search embeddings for a specific book within curriculum"""
+        table_name = await self.get_curriculum_embedding_table_name(curriculum_name)
+        
+        # Convert embedding to PostgreSQL vector format
+        embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
+        
+        async with self.get_connection() as conn:
+            # Check if table exists
+            table_exists = await conn.fetchval("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = $1
+                )
+            """, table_name)
+            
+            if not table_exists:
+                logger.warning(f"Curriculum embedding table '{table_name}' does not exist")
+                return []
+            
+            # Search embeddings filtered by book_id
+            rows = await conn.fetch(f"""
+                SELECT content, metadata, embedding <-> $1::vector as distance
+                FROM "{table_name}"
+                WHERE book_id = $3
+                ORDER BY embedding <-> $1::vector
+                LIMIT $2
+            """, embedding_str, limit, book_id)
+            
+            logger.info(f"Found {len(rows)} embeddings for book_id {book_id} in {table_name}")
+            return [{'content': row['content'], 'metadata': row['metadata'], 'distance': row['distance']} for row in rows]
 
 # Global database instance
 db_manager: Optional[DatabaseManager] = None

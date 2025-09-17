@@ -39,6 +39,7 @@ export default function ExamView() {
   const [error, setError] = useState('');
   
   // Get exam parameters from URL with memoization to prevent re-renders
+  const curriculumId = searchParams.get('curriculumId');
   const bookTitle = searchParams.get('book');
   const questionCount = parseInt(searchParams.get('questionCount') || '10');
   const timeLimit = parseInt(searchParams.get('timeLimit') || '30');
@@ -72,20 +73,23 @@ export default function ExamView() {
         userMessage += ` for a ${timeLimit}-minute exam`;
       }
       
-      if (scopeType === 'specific_topics' && specificTopics) {
+      if (scopeType === 'whole_curriculum') {
+        userMessage += ` covering the entire curriculum content`;
+      } else if (scopeType === 'specific_topics' && specificTopics) {
         userMessage += ` focusing specifically on: ${specificTopics}`;
       } else {
         userMessage += ` covering the entire book content`;
       }
 
       const request: QuestionGenerationRequest = {
-        book_title: bookTitle!,
+        book_title: bookTitle || '',
+        curriculum_id: curriculumId || '',
         user_message: userMessage,
         count: questionCount,
         difficulty: difficulty,
         question_types: questionTypes,
         // Additional parameters for enhanced generation
-        scope_type: scopeType as 'whole_book' | 'specific_topics',
+        scope_type: scopeType as 'whole_curriculum' | 'whole_book' | 'specific_topics',
         specific_topics: specificTopics,
         time_limit: timeLimit
       };

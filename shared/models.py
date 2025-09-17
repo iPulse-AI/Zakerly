@@ -4,14 +4,17 @@ from datetime import datetime
 from enum import Enum
 import uuid
 
-class CategoryModel(BaseModel):
+class CurriculumModel(BaseModel):
     id: int
     name: str
+    description: Optional[str] = None
+    created_by: str = 'system'
     created_at: datetime
+    updated_at: datetime
 
 class BookModel(BaseModel):
     id: Optional[int] = None
-    category_id: int
+    curriculum_id: int
     title: str
     author: Optional[str] = None
     publication_year: Optional[int] = None
@@ -23,10 +26,12 @@ class BookUploadRequest(BaseModel):
     file_content: bytes = Field(..., description="File content as bytes")
     file_name: str = Field(..., description="Original filename")
     mime_type: str = Field(..., description="MIME type of the file")
+    curriculum_id: Optional[int] = Field(None, description="Curriculum ID - required for new system")
+    curriculum_name: Optional[str] = Field(None, description="Curriculum name - for creating new curriculum")
 
 class BookMetadata(BaseModel):
-    subject: str
-    category_id: int
+    curriculum_id: int
+    curriculum_name: str
     title: str
     author: Optional[str] = None
     publication_year: Optional[int] = None
@@ -61,8 +66,7 @@ class ChatMessageModel(BaseModel):
     created_at: Optional[datetime] = None
 
 class ChatRequest(BaseModel):
-    category: str = Field(..., description="Book category")
-    book_title: str = Field(..., description="Book title")
+    curriculum: str = Field(..., description="Curriculum name (required)")
     session_id: Optional[str] = Field(default="", description="Chat session ID - empty string for new sessions")
     user_message: str = Field(..., description="User's message")
     intent: Optional[str] = Field(default="answer_question", description="Chat intent")
@@ -74,16 +78,17 @@ class ChatResponse(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 class QuestionGenerationRequest(BaseModel):
-    book_title: str
+    curriculum: Optional[str] = Field(None, description="Curriculum name")
+    book_title: Optional[str] = Field(None, description="Specific book title")
+    curriculum_id: Optional[str] = Field(None, description="Curriculum ID")
     user_message: str
     topics: Optional[List[str]] = None
     count: Optional[int] = 5
     difficulty: Optional[List[str]] = None
     question_types: Optional[List[str]] = None
-    scope_type: Optional[str] = "whole_book"  # 'whole_book' or 'specific_topics'
+    scope_type: Optional[str] = "whole_book"  # 'whole_curriculum', 'whole_book' or 'specific_topics'
     specific_topics: Optional[str] = None
     time_limit: Optional[int] = None  # in minutes
-    category_id: Optional[str] = None
 
 class Question(BaseModel):
     difficulty: str
@@ -97,9 +102,8 @@ class QuestionResponse(BaseModel):
     questions_generated: List[Question]
 
 class LectureRequest(BaseModel):
-    book_title: str
+    curriculum: str = Field(..., description="Curriculum name (required)")
     user_message: str
-    category: Optional[str] = None
     title: Optional[str] = None
     scope: Optional[str] = "whole_book"  # 'whole_book' or 'specific_topics'
     specific_topics: Optional[str] = None
@@ -151,6 +155,27 @@ class LectureScriptUpdate(BaseModel):
     detail_level: Optional[str] = None
     difficulty: Optional[str] = None
     duration: Optional[int] = None
+
+# Curriculum-specific models
+class CurriculumCreateRequest(BaseModel):
+    name: str = Field(..., description="Curriculum name")
+    description: Optional[str] = Field(None, description="Curriculum description")
+    created_by: str = Field('user', description="Who created this curriculum")
+
+class CurriculumUpdateRequest(BaseModel):
+    name: Optional[str] = Field(None, description="Curriculum name")
+    description: Optional[str] = Field(None, description="Curriculum description")
+
+class BookWithCurriculum(BaseModel):
+    id: int
+    curriculum_id: int
+    curriculum_name: str
+    title: str
+    author: Optional[str] = None
+    publication_year: Optional[int] = None
+    file_hash: str
+    file_name: str
+    created_at: datetime
 
 class HealthCheck(BaseModel):
     status: str

@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 # Add shared modules to path
 sys.path.append('/app/shared')
 
-from models import BookModel, BookMetadata, HealthCheck, ErrorResponse
+from models import BookModel, BookMetadata, HealthCheck, ErrorResponse, CurriculumModel, CurriculumCreateRequest
 from database import get_database, DatabaseManager
 from utils import setup_logging, get_redis
 from ingestion_service import IngestionService
@@ -76,11 +76,12 @@ async def health_check():
 
 @app.post("/upload", response_model=BookModel)
 async def upload_book(
+    curriculum_id: int,
     file: UploadFile = File(...),
     ingestion_service: IngestionService = Depends(get_ingestion_service)
 ):
-    """Upload and process a book file"""
-    logger.info(f"Received file upload: {file.filename}")
+    """Upload and process a book file for a specific curriculum"""
+    logger.info(f"Received file upload: {file.filename} for curriculum {curriculum_id}")
     
     # Validate file
     if not file.filename:
@@ -92,13 +93,14 @@ async def upload_book(
         raise HTTPException(status_code=400, detail="Empty file")
     
     try:
-        # Process the book
+        # Process the book with curriculum
         book = await ingestion_service.process_book(
             content=content,
             filename=file.filename,
-            mime_type=file.content_type or "application/octet-stream"
+            mime_type=file.content_type or "application/octet-stream",
+            curriculum_id=curriculum_id
         )
-        logger.info(f"Successfully processed book: {book.title}")
+        logger.info(f"Successfully processed book: {book.title} for curriculum {curriculum_id}")
         return book
 
     except ValueError as e:
@@ -152,29 +154,119 @@ async def upload_book(
             return existing_book
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-@app.get("/books", response_model=list[BookModel])
-async def list_books(
-    category_id: int = None,
+# Curriculum endpoints
+@app.post("/curriculums", response_model=CurriculumModel)
+async def create_curriculum(
+    curriculum: CurriculumCreateRequest,
     ingestion_service: IngestionService = Depends(get_ingestion_service)
 ):
-    """List all books or books by category"""
+    """Create a new curriculum"""
     try:
-        books = await ingestion_service.list_books(category_id)
+        new_curriculum = await ingestion_service.create_curriculum(curriculum)
+        logger.info(f"Successfully created curriculum: {new_curriculum.name}")
+        return new_curriculum
+    except ValueError as e:
+        logger.warning(f"Invalid curriculum data: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error creating curriculum: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.get("/curriculums", response_model=list[CurriculumModel])
+async def list_curriculums(
+    ingestion_service: IngestionService = Depends(get_ingestion_service)
+):
+    """List all curriculums"""
+    try:
+        curriculums = await ingestion_service.list_curriculums()
+        return curriculums
+    except Exception as e:
+        logger.error(f"Error listing curriculums: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.get("/curriculums/{curriculum_id}", response_model=CurriculumModel)
+async def get_curriculum(
+    curriculum_id: int,
+    ingestion_service: IngestionService = Depends(get_ingestion_service)
+):
+    """Get curriculum by ID"""
+    try:
+        curriculum = await ingestion_service.get_curriculum_by_id(curriculum_id)
+        if not curriculum:
+            raise HTTPException(status_code=404, detail="Curriculum not found")
+        return curriculum
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting curriculum {curriculum_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.put("/curriculums/{curriculum_id}", response_model=CurriculumModel)
+async def update_curriculum(
+    curriculum_id: int,
+    curriculum: CurriculumCreateRequest,
+    ingestion_service: IngestionService = Depends(get_ingestion_service)
+):
+    """Update curriculum by ID"""
+    try:
+        updated_curriculum = await ingestion_service.update_curriculum(curriculum_id, curriculum)
+        if not updated_curriculum:
+            raise HTTPException(status_code=404, detail="Curriculum not found")
+        logger.info(f"Successfully updated curriculum: {updated_curriculum.name}")
+        return updated_curriculum
+    except HTTPException:
+        raise
+    except ValueError as e:
+        logger.warning(f"Invalid curriculum update data: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error updating curriculum {curriculum_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.delete("/curriculums/{curriculum_id}")
+async def delete_curriculum(
+    curriculum_id: int,
+    ingestion_service: IngestionService = Depends(get_ingestion_service)
+):
+    """Delete curriculum by ID"""
+    try:
+        success = await ingestion_service.delete_curriculum(curriculum_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Curriculum not found")
+        return {"message": "Curriculum deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting curriculum {curriculum_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.get("/curriculums/{curriculum_id}/books", response_model=list[BookModel])
+async def list_curriculum_books(
+    curriculum_id: int,
+    ingestion_service: IngestionService = Depends(get_ingestion_service)
+):
+    """List all books in a curriculum"""
+    try:
+        books = await ingestion_service.list_books_by_curriculum(curriculum_id)
+        return books
+    except Exception as e:
+        logger.error(f"Error listing books for curriculum {curriculum_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.get("/books", response_model=list[BookModel])
+async def list_books(
+    curriculum_id: int = None,
+    ingestion_service: IngestionService = Depends(get_ingestion_service)
+):
+    """List all books or books by curriculum"""
+    try:
+        if curriculum_id:
+            books = await ingestion_service.list_books_by_curriculum(curriculum_id)
+        else:
+            books = await ingestion_service.list_books()
         return books
     except Exception as e:
         logger.error(f"Error listing books: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-@app.get("/categories")
-async def list_categories(
-    ingestion_service: IngestionService = Depends(get_ingestion_service)
-):
-    """List all categories"""
-    try:
-        categories = await ingestion_service.list_categories()
-        return categories
-    except Exception as e:
-        logger.error(f"Error listing categories: {e}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.get("/books/{book_id}", response_model=BookModel)

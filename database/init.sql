@@ -14,37 +14,42 @@ CREATE TABLE IF NOT EXISTS users (
 -- Create indexes for users table
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 
--- Create categories table
-CREATE TABLE IF NOT EXISTS category (
+-- Categories table removed - using curriculum-only system
+
+-- Create curriculum table (new enhanced system)
+CREATE TABLE IF NOT EXISTS curriculum (
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL UNIQUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    description TEXT,
+    created_by VARCHAR(255) DEFAULT 'system',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Insert default categories
-INSERT INTO category (name) VALUES 
-    ('math'),
-    ('science'),
-    ('physics'),
-    ('chemistry'),
-    ('history'),
-    ('geology'),
-    ('general')
+-- Insert limited curriculums (maximum 5)
+INSERT INTO curriculum (name, description, created_by) VALUES 
+    ('Computer Science', 'Computer science, programming, and technology', 'user'),
+    ('Mathematics', 'Mathematics and related mathematical concepts', 'user'),
+    ('Science', 'General science and scientific principles', 'user'),
+    ('Business', 'Business, economics, and management', 'user'),
+    ('General Studies', 'General academic content and miscellaneous topics', 'user')
 ON CONFLICT (name) DO NOTHING;
 
--- Create books table
+-- Create books table (curriculum-only system)
 CREATE TABLE IF NOT EXISTS books (
     id SERIAL PRIMARY KEY,
-    category_id INTEGER NOT NULL,
+    curriculum_id INTEGER NOT NULL,
     title VARCHAR(255) NOT NULL,
     author VARCHAR(255),
     publication_year INTEGER,
     file_hash VARCHAR(255) NOT NULL UNIQUE,
     file_name VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_category
-        FOREIGN KEY (category_id)
-        REFERENCES category(id)
+    CONSTRAINT fk_curriculum
+        FOREIGN KEY (curriculum_id)
+        REFERENCES curriculum(id),
+    CONSTRAINT check_curriculum_required 
+        CHECK (curriculum_id IS NOT NULL)
 );
 
 -- Create chat sessions table
@@ -116,8 +121,10 @@ CREATE TABLE IF NOT EXISTS lecture_scripts (
 );
 
 -- Create indexes for better performance
-CREATE INDEX IF NOT EXISTS idx_books_category_id ON books(category_id);
+CREATE INDEX IF NOT EXISTS idx_books_curriculum_id ON books(curriculum_id);
 CREATE INDEX IF NOT EXISTS idx_books_file_hash ON books(file_hash);
+CREATE INDEX IF NOT EXISTS idx_curriculum_name ON curriculum(name);
+CREATE INDEX IF NOT EXISTS idx_curriculum_created_by ON curriculum(created_by);
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_id ON chat_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_book_id ON chat_sessions(book_id);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON chat_messages(session_id);
@@ -148,3 +155,86 @@ CREATE TRIGGER update_chat_sessions_updated_at
 CREATE TRIGGER update_session_memory_updated_at 
     BEFORE UPDATE ON session_memory 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Create trigger for curriculum
+CREATE TRIGGER update_curriculum_updated_at 
+    BEFORE UPDATE ON curriculum 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Create function to limit curriculums to maximum 5
+CREATE OR REPLACE FUNCTION check_curriculum_limit()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF (SELECT COUNT(*) FROM curriculum) >= 5 THEN
+        RAISE EXCEPTION 'Maximum of 5 curriculums allowed';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create trigger to enforce curriculum limit
+CREATE TRIGGER curriculum_limit_trigger
+    BEFORE INSERT ON curriculum
+    FOR EACH ROW EXECUTE FUNCTION check_curriculum_limit();
+
+-- Create functions for curriculum embedding tables
+CREATE OR REPLACE FUNCTION create_curriculum_embedding_table(curriculum_name TEXT, embedding_dimension INTEGER DEFAULT 1536)
+RETURNS TEXT AS $$
+DECLARE
+    table_name TEXT;
+    safe_name TEXT;
+BEGIN
+    -- Create safe table name from curriculum name
+    safe_name := regexp_replace(lower(curriculum_name), '[^a-z0-9_]', '_', 'g');
+    safe_name := regexp_replace(safe_name, '_+', '_', 'g');
+    safe_name := trim(safe_name, '_');
+    table_name := 'curriculum_embeddings_' || safe_name;
+    
+    -- Create the table with dynamic embedding dimension
+    EXECUTE format('
+        CREATE TABLE IF NOT EXISTS %I (
+            id SERIAL PRIMARY KEY,
+            curriculum_id INTEGER NOT NULL,
+            book_id INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            metadata JSONB,
+            embedding vector(%s),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT fk_%I_curriculum
+                FOREIGN KEY (curriculum_id)
+                REFERENCES curriculum(id) ON DELETE CASCADE,
+            CONSTRAINT fk_%I_book
+                FOREIGN KEY (book_id)
+                REFERENCES books(id) ON DELETE CASCADE
+        )', table_name, embedding_dimension, table_name, table_name);
+    
+    -- Create indexes
+    EXECUTE format('CREATE INDEX IF NOT EXISTS idx_%I_curriculum_id ON %I(curriculum_id)', table_name, table_name);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS idx_%I_book_id ON %I(book_id)', table_name, table_name);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS idx_%I_embedding ON %I USING ivfflat (embedding vector_cosine_ops)', table_name, table_name);
+    
+    RETURN table_name;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION get_curriculum_embedding_table_name(curriculum_name TEXT)
+RETURNS TEXT AS $$
+DECLARE
+    safe_name TEXT;
+BEGIN
+    safe_name := regexp_replace(lower(curriculum_name), '[^a-z0-9_]', '_', 'g');
+    safe_name := regexp_replace(safe_name, '_+', '_', 'g');
+    safe_name := trim(safe_name, '_');
+    RETURN 'curriculum_embeddings_' || safe_name;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create default embedding tables for initial curriculums
+DO $$
+DECLARE
+    curr RECORD;
+BEGIN
+    FOR curr IN SELECT name FROM curriculum LOOP
+        PERFORM create_curriculum_embedding_table(curr.name, 1536);
+    END LOOP;
+END $$;

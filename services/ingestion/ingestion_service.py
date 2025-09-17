@@ -16,9 +16,9 @@ from langchain_core.output_parsers import StrOutputParser
 import sys
 sys.path.append('/app/shared')
 
-from models import BookModel, BookMetadata, CategoryModel
+from models import BookModel, BookMetadata, CurriculumModel, CurriculumCreateRequest
 from database import DatabaseManager
-from utils import calculate_file_hash, sanitize_title_for_table, extract_category_id, RedisManager, validate_file_type
+from utils import calculate_file_hash, sanitize_title_for_table, RedisManager, validate_file_type
 import tempfile
 import os
 import io
@@ -52,32 +52,48 @@ class IngestionService:
         self.metadata_prompt = ChatPromptTemplate.from_messages([
             ("system", """You are an expert document analysis and metadata extraction AI. Your sole function is to analyze the provided text and metadata to create a complete, structured JSON record.
 
-Your response MUST be a single, clean JSON object with the following keys: `subject`, `category_id`, `title`, `author`, `publication_year`, `file_hash`, `file_name`.
+Your response MUST be a single, clean JSON object with the following keys: `title`, `author`, `publication_year`, `file_hash`, `file_name`.
 
 **INSTRUCTIONS:**
 
 1. **Analyze Text Content:**
-   - **Classify** the book's main topic to determine the `subject`. The subject name MUST be from: math, science, physics, chemistry, history, geology, general
    - **Extract** the `title`, `author`, and `publication_year`. If any cannot be found, their value MUST be `null`.
+   - Focus ONLY on metadata extraction, NOT subject classification.
 
 2. **Format the `title` for Database Use:**
    - Convert the entire title to UPPERCASE.
    - Replace all spaces with a single underscore (`_`).
    - Remove any characters that are NOT uppercase letters (A-Z), numbers (0-9), or underscores (`_`).
 
-3. **Use Category ID Mapping:**
-   - math: 1, science: 2, physics: 3, chemistry: 4, history: 5, geology: 6, general: 7
-
-4. **Copy from Provided Metadata:**
+3. **Copy from Provided Metadata:**
    - Copy the `file_hash` and `file_name` values directly.
 
 Respond with ONLY the JSON object, no additional text."""),
-            ("human", "Text Content: {text}\n\nFile Hash: {file_hash}\nFile Name: {file_name}")
+            ("human", "Text Content: {text}\n\nFile Hash: {file_hash}\nFile Name: {file_name}\nCurriculum ID: {curriculum_id}\nCurriculum Name: {curriculum_name}")
         ])
 
-    async def process_book(self, content: bytes, filename: str, mime_type: str) -> BookModel:
+    async def process_book(self, content: bytes, filename: str, mime_type: str, curriculum_id: int = None, curriculum_name: str = None) -> BookModel:
         """Process uploaded book file"""
         try:
+            # Validate curriculum requirement
+            if not curriculum_id and not curriculum_name:
+                raise ValueError("Either curriculum_id or curriculum_name must be provided")
+            
+            # Handle curriculum creation/validation
+            if curriculum_name and not curriculum_id:
+                # Create new curriculum or get existing one
+                existing_curriculum = await self.db.get_curriculum_by_name(curriculum_name)
+                if existing_curriculum:
+                    curriculum_id = existing_curriculum['id']
+                else:
+                    curriculum_id = await self.db.create_curriculum(curriculum_name, f"Custom curriculum: {curriculum_name}")
+            elif curriculum_id:
+                # Validate existing curriculum
+                curriculum = await self.db.get_curriculum_by_id(curriculum_id)
+                if not curriculum:
+                    raise ValueError(f"Curriculum with ID {curriculum_id} does not exist")
+                curriculum_name = curriculum['name']
+            
             # Validate file type
             if not validate_file_type(mime_type):
                 raise ValueError(f"Unsupported file type: {mime_type}")
@@ -92,12 +108,12 @@ Respond with ONLY the JSON object, no additional text."""),
             # Extract text from file
             text_content = await self._extract_text(content, filename, mime_type)
             
-            # Extract metadata using LLM
-            metadata = await self._extract_metadata(text_content, file_hash, filename)
+            # Extract metadata using LLM (no more auto-categorization)
+            metadata = await self._extract_metadata(text_content, file_hash, filename, curriculum_id, curriculum_name)
             
             # Insert book into database first - this is the critical operation
             book_id = await self.db.insert_book({
-                'category_id': metadata.category_id,
+                'curriculum_id': metadata.curriculum_id,
                 'title': metadata.title,
                 'author': metadata.author,
                 'publication_year': metadata.publication_year,
@@ -108,7 +124,7 @@ Respond with ONLY the JSON object, no additional text."""),
             # Create book model - book is successfully saved at this point
             book = BookModel(
                 id=book_id,
-                category_id=metadata.category_id,
+                curriculum_id=metadata.curriculum_id,
                 title=metadata.title,
                 author=metadata.author,
                 publication_year=metadata.publication_year,
@@ -117,13 +133,13 @@ Respond with ONLY the JSON object, no additional text."""),
                 created_at=datetime.utcnow()
             )
             
-            # Try to create vector store - if this fails, we still return success
+            # Try to create curriculum-based vector store - if this fails, we still return success
             try:
-                await self._create_vector_store(text_content, metadata.title)
-                logger.info(f"Successfully created vector store for: {metadata.title}")
+                await self._create_curriculum_vector_store(text_content, curriculum_name, curriculum_id, book_id)
+                logger.info(f"Successfully created curriculum vector store for: {metadata.title} in curriculum: {curriculum_name}")
             except Exception as vector_error:
-                logger.error(f"Failed to create vector store for {metadata.title}: {vector_error}")
-                logger.warning(f"Book {metadata.title} was saved to database but vector store creation failed")
+                logger.error(f"Failed to create curriculum vector store for {metadata.title}: {vector_error}")
+                logger.warning(f"Book {metadata.title} was saved to database but curriculum vector store creation failed")
                 # Don't raise the error - the book is still successfully added
             
             # Try to cache the book data - if this fails, we still return success
@@ -193,7 +209,7 @@ Respond with ONLY the JSON object, no additional text."""),
         
         return text
 
-    async def _extract_metadata(self, text: str, file_hash: str, filename: str) -> BookMetadata:
+    async def _extract_metadata(self, text: str, file_hash: str, filename: str, curriculum_id: int, curriculum_name: str) -> BookMetadata:
         """Extract metadata using LLM"""
         result = ""
         try:
@@ -205,7 +221,9 @@ Respond with ONLY the JSON object, no additional text."""),
             result = await chain.ainvoke({
                 "text": text_for_llm,
                 "file_hash": file_hash,
-                "file_name": filename
+                "file_name": filename,
+                "curriculum_id": curriculum_id,
+                "curriculum_name": curriculum_name
             })
             
             # Clean and validate the result
@@ -236,20 +254,57 @@ Respond with ONLY the JSON object, no additional text."""),
                 logger.warning(f"JSON decode error: {json_error}, using fallback metadata")
                 raise ValueError(f"Invalid JSON: {json_error}")
             
-            # Validate required fields
-            required_fields = ['subject', 'category_id', 'title', 'file_hash', 'file_name']
+            # Validate required fields (no longer require subject or category_id)
+            required_fields = ['title', 'file_hash', 'file_name']
             for field in required_fields:
                 if field not in metadata_dict:
                     logger.warning(f"Missing required field: {field}, using fallback metadata")
                     raise ValueError(f"Missing required field: {field}")
             
-            # Create BookMetadata object
+            # Clean up "NULL" strings and convert to None
+            def clean_null_value(value):
+                """Clean null-like values from LLM responses"""
+                if value is None:
+                    return None
+                if isinstance(value, str):
+                    # Handle common null-like strings from LLM
+                    cleaned = value.strip().upper()
+                    if cleaned in ['NULL', 'NONE', '', 'N/A', 'NOT PROVIDED', 'UNKNOWN']:
+                        return None
+                return value
+            
+            # Extract and clean values
+            title = clean_null_value(metadata_dict.get('title'))
+            author = clean_null_value(metadata_dict.get('author'))
+            publication_year = clean_null_value(metadata_dict.get('publication_year'))
+            
+            # Convert publication_year to int if it's a valid string
+            if publication_year is not None:
+                try:
+                    # Handle string numbers or direct integers
+                    if isinstance(publication_year, str):
+                        publication_year = publication_year.strip()
+                        if not publication_year:
+                            publication_year = None
+                        else:
+                            publication_year = int(publication_year)
+                    elif not isinstance(publication_year, int):
+                        publication_year = int(publication_year)
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Invalid publication_year value: {publication_year} (type: {type(publication_year)}), error: {e}, setting to None")
+                    publication_year = None
+            
+            # Use filename as title if title is null/empty
+            if not title or title.upper() in ['NULL', 'NONE']:
+                title = sanitize_title_for_table(filename.split('.')[0])
+            
+            # Create BookMetadata object with curriculum information
             metadata = BookMetadata(
-                subject=metadata_dict['subject'],
-                category_id=metadata_dict['category_id'],
-                title=metadata_dict['title'],
-                author=metadata_dict.get('author'),
-                publication_year=metadata_dict.get('publication_year'),
+                curriculum_id=curriculum_id,
+                curriculum_name=curriculum_name,
+                title=title,
+                author=author,
+                publication_year=publication_year,
                 file_hash=metadata_dict['file_hash'],
                 file_name=metadata_dict['file_name']
             )
@@ -261,14 +316,10 @@ Respond with ONLY the JSON object, no additional text."""),
             logger.error(f"Error extracting metadata: {e}")
             logger.error(f"LLM response was: {result if result else 'No response'}")
             
-            # Determine subject from filename for physics book
-            subject = "physics" if "physics" in filename.lower() else "general"
-            category_id = 3 if subject == "physics" else 7
-            
             # Fallback to basic metadata
             fallback_metadata = BookMetadata(
-                subject=subject,
-                category_id=category_id,
+                curriculum_id=curriculum_id,
+                curriculum_name=curriculum_name,
                 title=sanitize_title_for_table(filename.split('.')[0]),
                 author=None,
                 publication_year=None,
@@ -278,6 +329,47 @@ Respond with ONLY the JSON object, no additional text."""),
             
             logger.info(f"Using fallback metadata: {fallback_metadata.title}")
             return fallback_metadata
+
+    async def _create_curriculum_vector_store(self, text: str, curriculum_name: str, curriculum_id: int, book_id: int):
+        """Create curriculum-based vector store for the book"""
+        try:
+            # Split text into chunks
+            documents = self.text_splitter.create_documents([text])
+            
+            # Create embeddings for all documents
+            texts = [doc.page_content for doc in documents]
+            embeddings_list = await self.embeddings.aembed_documents(texts)
+            
+            if not embeddings_list:
+                raise ValueError("No embeddings generated")
+            
+            logger.info(f"Generated {len(embeddings_list)} embeddings for curriculum: {curriculum_name}")
+            
+            # Insert embeddings into curriculum-specific table
+            for i, (doc, embedding) in enumerate(zip(documents, embeddings_list)):
+                try:
+                    # Clean the document content before inserting
+                    clean_content = self._clean_text_for_database(doc.page_content)
+                    
+                    # Insert into curriculum embedding table
+                    await self.db.insert_curriculum_embedding(
+                        curriculum_name=curriculum_name,
+                        curriculum_id=curriculum_id,
+                        book_id=book_id,
+                        content=clean_content,
+                        embedding=embedding,
+                        metadata=doc.metadata
+                    )
+                    
+                except Exception as insert_error:
+                    logger.error(f"Error inserting embedding chunk {i} for curriculum {curriculum_name}: {insert_error}")
+                    raise
+            
+            logger.info(f"Successfully created curriculum vector store for {curriculum_name} with {len(documents)} chunks")
+            
+        except Exception as e:
+            logger.error(f"Error creating curriculum vector store for {curriculum_name}: {e}")
+            raise
 
     async def _create_vector_store(self, text: str, table_name: str):
         """Create vector store for the book"""
@@ -362,15 +454,13 @@ Respond with ONLY the JSON object, no additional text."""),
         except Exception as e:
             logger.warning(f"Failed to cache book data: {e}")
 
-    async def list_books(self, category_id: int = None) -> List[BookModel]:
-        """List books, optionally filtered by category"""
+    async def list_books(self, curriculum_id: int = None) -> List[BookModel]:
+        """List books, optionally filtered by curriculum"""
         try:
-            if category_id:
-                books_data = await self.db.get_books_by_category(category_id)
+            if curriculum_id:
+                books_data = await self.db.get_books_by_curriculum(curriculum_id)
             else:
-                books_data = await self.db.execute_query(
-                    "SELECT * FROM books ORDER BY created_at DESC"
-                )
+                books_data = await self.db.get_all_books()
             
             books = []
             for book_data in books_data:
@@ -382,16 +472,43 @@ Respond with ONLY the JSON object, no additional text."""),
         except Exception as e:
             logger.error(f"Error listing books: {e}")
             raise
-
-    async def list_categories(self) -> List[CategoryModel]:
-        """List all categories"""
+    
+    async def list_curriculums(self) -> List[CurriculumModel]:
+        """List all curriculums"""
         try:
-            categories_data = await self.db.get_categories()
-            categories = [CategoryModel(**cat_data) for cat_data in categories_data]
-            return categories
+            curriculums_data = await self.db.get_curriculums()
+            curriculums = [CurriculumModel(**curr_data) for curr_data in curriculums_data]
+            return curriculums
             
         except Exception as e:
-            logger.error(f"Error listing categories: {e}")
+            logger.error(f"Error listing curriculums: {e}")
+            raise
+    
+    async def create_curriculum(self, curriculum_request) -> CurriculumModel:
+        """Create new curriculum"""
+        try:
+            curriculum_id = await self.db.create_curriculum(
+                curriculum_request.name, 
+                curriculum_request.description, 
+                curriculum_request.created_by
+            )
+            curriculum_data = await self.db.get_curriculum_by_id(curriculum_id)
+            return CurriculumModel(**curriculum_data)
+            
+        except Exception as e:
+            logger.error(f"Error creating curriculum: {e}")
+            raise
+    
+    async def get_curriculum_by_id(self, curriculum_id: int) -> Optional[CurriculumModel]:
+        """Get curriculum by ID"""
+        try:
+            curriculum_data = await self.db.get_curriculum_by_id(curriculum_id)
+            if curriculum_data:
+                return CurriculumModel(**curriculum_data)
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting curriculum: {e}")
             raise
 
     async def get_book_by_id(self, book_id: int) -> Optional[BookModel]:
@@ -457,4 +574,61 @@ Respond with ONLY the JSON object, no additional text."""),
             
         except Exception as e:
             logger.error(f"Error deleting book {book_id}: {e}")
+            raise
+
+    async def update_curriculum(self, curriculum_id: int, curriculum_request) -> Optional[CurriculumModel]:
+        """Update curriculum by ID"""
+        try:
+            success = await self.db.update_curriculum(
+                curriculum_id,
+                curriculum_request.name,
+                curriculum_request.description,
+                curriculum_request.created_by
+            )
+            if success:
+                curriculum_data = await self.db.get_curriculum_by_id(curriculum_id)
+                return CurriculumModel(**curriculum_data)
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error updating curriculum {curriculum_id}: {e}")
+            raise
+
+    async def delete_curriculum(self, curriculum_id: int) -> bool:
+        """Delete curriculum by ID"""
+        try:
+            # Get curriculum info first
+            curriculum = await self.get_curriculum_by_id(curriculum_id)
+            if not curriculum:
+                return False
+            
+            # Delete curriculum embedding table
+            embedding_table = f"curriculum_embeddings_{curriculum.name.lower().replace(' ', '_')}"
+            try:
+                await self.db.execute_command(f"DROP TABLE IF EXISTS {embedding_table}")
+            except Exception as e:
+                logger.warning(f"Failed to drop curriculum embedding table {embedding_table}: {e}")
+            
+            # Delete from curriculum table (this will cascade to books)
+            result = await self.db.execute_command(
+                "DELETE FROM curriculum WHERE id = $1", curriculum_id
+            )
+            
+            return "DELETE 1" in result
+            
+        except Exception as e:
+            logger.error(f"Error deleting curriculum {curriculum_id}: {e}")
+            raise
+
+    async def list_books_by_curriculum(self, curriculum_id: int) -> List[BookModel]:
+        """List books in a specific curriculum"""
+        try:
+            books_data = await self.db.fetch_all(
+                "SELECT * FROM books WHERE curriculum_id = $1 ORDER BY created_at DESC",
+                curriculum_id
+            )
+            return [BookModel(**book) for book in books_data]
+            
+        except Exception as e:
+            logger.error(f"Error listing books for curriculum {curriculum_id}: {e}")
             raise

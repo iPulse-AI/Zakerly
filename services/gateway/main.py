@@ -168,18 +168,20 @@ async def health_check():
 
 # Ingestion Service Endpoints
 @app.post("/api/v1/upload", response_model=BookModel, dependencies=[Depends(check_rate_limit)])
-async def upload_book(file: UploadFile = File(...)):
-    """Upload book file"""
+async def upload_book(curriculum_id: int, file: UploadFile = File(...)):
+    """Upload book file for a specific curriculum"""
     try:
         # Prepare file for forwarding
         file_content = await file.read()
         files = {"file": (file.filename, file_content, file.content_type)}
+        params = {"curriculum_id": curriculum_id}
         
         result = await forward_request(
             INGESTION_SERVICE_URL,
             "/upload",
             method="POST",
-            files=files
+            files=files,
+            params=params
         )
         
         return result
@@ -191,15 +193,20 @@ async def upload_book(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/v1/books", dependencies=[Depends(check_rate_limit)])
-async def list_books(category_id: int = None):
-    """List books"""
+async def list_books(curriculum_id: int = None, category_id: int = None):
+    """List books by curriculum or category"""
     try:
-        params = {"category_id": category_id} if category_id else None
+        params = {}
+        if curriculum_id:
+            params["curriculum_id"] = curriculum_id
+        elif category_id:
+            params["category_id"] = category_id
+        
         result = await forward_request(
             INGESTION_SERVICE_URL,
             "/books",
             method="GET",
-            params=params
+            params=params if params else None
         )
         
         return result
@@ -225,6 +232,113 @@ async def list_categories():
         raise
     except Exception as e:
         logger.error(f"Error in list categories endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Curriculum Endpoints
+@app.post("/api/v1/curriculums", dependencies=[Depends(check_rate_limit)])
+async def create_curriculum(request: Request):
+    """Create a new curriculum"""
+    try:
+        data = await request.json()
+        result = await forward_request(
+            INGESTION_SERVICE_URL,
+            "/curriculums",
+            method="POST",
+            data=data
+        )
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in create curriculum endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/curriculums", dependencies=[Depends(check_rate_limit)])
+async def list_curriculums():
+    """List all curriculums"""
+    try:
+        result = await forward_request(
+            INGESTION_SERVICE_URL,
+            "/curriculums",
+            method="GET"
+        )
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in list curriculums endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/curriculums/{curriculum_id}", dependencies=[Depends(check_rate_limit)])
+async def get_curriculum(curriculum_id: int):
+    """Get curriculum by ID"""
+    try:
+        result = await forward_request(
+            INGESTION_SERVICE_URL,
+            f"/curriculums/{curriculum_id}",
+            method="GET"
+        )
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in get curriculum endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/v1/curriculums/{curriculum_id}", dependencies=[Depends(check_rate_limit)])
+async def update_curriculum(curriculum_id: int, request: Request):
+    """Update curriculum by ID"""
+    try:
+        data = await request.json()
+        result = await forward_request(
+            INGESTION_SERVICE_URL,
+            f"/curriculums/{curriculum_id}",
+            method="PUT",
+            data=data
+        )
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in update curriculum endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/v1/curriculums/{curriculum_id}", dependencies=[Depends(check_rate_limit)])
+async def delete_curriculum(curriculum_id: int):
+    """Delete curriculum by ID"""
+    try:
+        result = await forward_request(
+            INGESTION_SERVICE_URL,
+            f"/curriculums/{curriculum_id}",
+            method="DELETE"
+        )
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in delete curriculum endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/curriculums/{curriculum_id}/books", dependencies=[Depends(check_rate_limit)])
+async def list_curriculum_books(curriculum_id: int):
+    """List all books in a curriculum"""
+    try:
+        result = await forward_request(
+            INGESTION_SERVICE_URL,
+            f"/curriculums/{curriculum_id}/books",
+            method="GET"
+        )
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in list curriculum books endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/v1/books/{book_id}", dependencies=[Depends(check_rate_limit)])
@@ -321,14 +435,24 @@ async def generate_lecture(request: LectureRequest):
 
 # Session Management Endpoints
 @app.post("/api/v1/sessions", dependencies=[Depends(check_rate_limit)])
-async def create_session(user_id: str, book_title: str, session_name: str = None):
-    """Create chat session"""
+async def create_session(user_id: str, curriculum_name: str = None, book_title: str = None, session_name: str = None):
+    """Create chat session - supports both curriculum-based and book-based sessions"""
     try:
+        # Validate that either curriculum_name or book_title is provided
+        if not curriculum_name and not book_title:
+            raise HTTPException(
+                status_code=422,
+                detail="Either curriculum_name or book_title must be provided"
+            )
+        
         # Pass as query parameters to match chat service expectation
-        params = {
-            "user_id": user_id,
-            "book_title": book_title
-        }
+        params = {"user_id": user_id}
+        
+        if curriculum_name:
+            params["curriculum_name"] = curriculum_name
+        elif book_title:
+            params["book_title"] = book_title
+            
         if session_name:
             params["session_name"] = session_name
         

@@ -1,10 +1,20 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Header } from '@/components/ui/header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Progress } from '@/components/ui/progress';
+import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { 
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { 
   Upload, 
   FileText, 
@@ -15,10 +25,12 @@ import {
   Brain,
   Sparkles,
   BookOpen,
-  InfoIcon
+  InfoIcon,
+  Plus,
+  GraduationCap
 } from 'lucide-react';
-import { BooksService, Utils } from '@/lib/services';
-import type { Book } from '@/lib/types';
+import { BooksService, CurriculumService, Utils } from '@/lib/services';
+import type { Book, Curriculum, CurriculumCreateRequest } from '@/lib/types';
 
 export default function AddBook() {
   const navigate = useNavigate();
@@ -30,6 +42,33 @@ export default function AddBook() {
   const [uploadedBook, setUploadedBook] = useState<Book | null>(null);
   const [isDuplicate, setIsDuplicate] = useState(false);
   const [existingBook, setExistingBook] = useState<Book | null>(null);
+  
+  // Curriculum state
+  const [curriculums, setCurriculums] = useState<Curriculum[]>([]);
+  const [selectedCurriculumId, setSelectedCurriculumId] = useState<number | null>(null);
+  const [isCreatingCurriculum, setIsCreatingCurriculum] = useState(false);
+  const [newCurriculumName, setNewCurriculumName] = useState('');
+  const [newCurriculumDescription, setNewCurriculumDescription] = useState('');
+  const [curriculumError, setCurriculumError] = useState('');
+  const [isLoadingCurriculums, setIsLoadingCurriculums] = useState(false);
+
+  // Load curriculums on component mount
+  useEffect(() => {
+    loadCurriculums();
+  }, []);
+
+  const loadCurriculums = async () => {
+    setIsLoadingCurriculums(true);
+    try {
+      const data = await CurriculumService.getCurriculums();
+      setCurriculums(data);
+    } catch (err) {
+      console.error('Failed to load curriculums:', err);
+      setCurriculumError('Failed to load curriculums');
+    } finally {
+      setIsLoadingCurriculums(false);
+    }
+  };
 
   const handleFileSelect = (file: File) => {
     const validation = Utils.validateFileType(file);
@@ -53,11 +92,44 @@ export default function AddBook() {
     }
   };
 
+  const createCurriculum = async () => {
+    if (!newCurriculumName.trim()) {
+      setCurriculumError('Curriculum name is required');
+      return;
+    }
+
+    try {
+      const curriculumRequest: CurriculumCreateRequest = {
+        name: newCurriculumName.trim(),
+        description: newCurriculumDescription.trim() || undefined,
+        created_by: 'user' // In a real app, this would come from auth context
+      };
+
+      const newCurriculum = await CurriculumService.createCurriculum(curriculumRequest);
+      setCurriculums(prev => [...prev, newCurriculum]);
+      setSelectedCurriculumId(newCurriculum.id);
+      
+      // Reset form
+      setNewCurriculumName('');
+      setNewCurriculumDescription('');
+      setIsCreatingCurriculum(false);
+      setCurriculumError('');
+      
+    } catch (err) {
+      setCurriculumError(err instanceof Error ? err.message : 'Failed to create curriculum');
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!bookFile) {
       setError('Please select a file to upload');
+      return;
+    }
+
+    if (!selectedCurriculumId) {
+      setError('Please select a curriculum for this book');
       return;
     }
 
@@ -79,8 +151,8 @@ export default function AddBook() {
         });
       }, 300);
 
-      // Upload the book
-      const book = await BooksService.uploadBook(bookFile);
+      // Upload the book with curriculum
+      const book = await BooksService.uploadBook(bookFile, selectedCurriculumId);
       
       clearInterval(progressInterval);
       setUploadProgress(100);
@@ -107,7 +179,7 @@ export default function AddBook() {
             id: 0,
             title: bookFile.name.replace(/\.[^/.]+$/, ""), // Remove extension
             author: 'Unknown',
-            category_id: 7,
+            curriculum_id: selectedCurriculumId || 1,
             file_name: bookFile.name,
             created_at: new Date().toISOString(),
             publication_year: null,
@@ -148,7 +220,7 @@ export default function AddBook() {
                       <p className="text-muted-foreground">by {uploadedBook.author}</p>
                     )}
                     <p className="text-sm text-muted-foreground">
-                      Category: {Utils.getCategoryName(uploadedBook.category_id)}
+                      Curriculum: {curriculums.find(c => c.id === uploadedBook.curriculum_id)?.name || 'Unknown'}
                     </p>
                   </div>
                 </div>
@@ -221,6 +293,128 @@ export default function AddBook() {
           </Card>
 
           <form onSubmit={handleSubmit} className="space-y-8">
+            {/* Curriculum Selection Section */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <GraduationCap className="w-5 h-5 text-primary" />
+                  Select Curriculum
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {curriculumError && (
+                  <Alert variant="destructive">
+                    <AlertCircle className="w-4 h-4" />
+                    <AlertDescription>{curriculumError}</AlertDescription>
+                  </Alert>
+                )}
+
+                <div className="space-y-4">
+                  <Label htmlFor="curriculum-select">Choose a curriculum for this book:</Label>
+                  
+                  {isLoadingCurriculums ? (
+                    <div className="flex items-center gap-2 p-4 bg-muted/50 rounded-lg">
+                      <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                      <span className="text-sm text-muted-foreground">Loading curriculums...</span>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <Select 
+                        value={selectedCurriculumId?.toString() || ''} 
+                        onValueChange={(value) => setSelectedCurriculumId(parseInt(value))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select a curriculum" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {curriculums.map((curriculum) => (
+                            <SelectItem key={curriculum.id} value={curriculum.id.toString()}>
+                              <div className="flex flex-col">
+                                <span className="font-medium">{curriculum.name}</span>
+                                {curriculum.description && (
+                                  <span className="text-xs text-muted-foreground">
+                                    {curriculum.description}
+                                  </span>
+                                )}
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 border-t border-muted-foreground/20"></div>
+                        <span className="text-xs text-muted-foreground bg-background px-2">OR</span>
+                        <div className="flex-1 border-t border-muted-foreground/20"></div>
+                      </div>
+
+                      {!isCreatingCurriculum ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => setIsCreatingCurriculum(true)}
+                          className="w-full flex items-center gap-2"
+                        >
+                          <Plus className="w-4 h-4" />
+                          Create New Curriculum
+                        </Button>
+                      ) : (
+                        <div className="space-y-4 border rounded-lg p-4 bg-muted/10">
+                          <h4 className="font-medium text-sm">Create New Curriculum</h4>
+                          <div className="space-y-3">
+                            <div>
+                              <Label htmlFor="curriculum-name">Name *</Label>
+                              <Input
+                                id="curriculum-name"
+                                value={newCurriculumName}
+                                onChange={(e) => setNewCurriculumName(e.target.value)}
+                                placeholder="e.g., Computer Science Fundamentals"
+                                className="mt-1"
+                              />
+                            </div>
+                            <div>
+                              <Label htmlFor="curriculum-description">Description</Label>
+                              <Textarea
+                                id="curriculum-description"
+                                value={newCurriculumDescription}
+                                onChange={(e) => setNewCurriculumDescription(e.target.value)}
+                                placeholder="Optional description of the curriculum"
+                                className="mt-1"
+                                rows={2}
+                              />
+                            </div>
+                            <div className="flex gap-2">
+                              <Button
+                                type="button"
+                                onClick={createCurriculum}
+                                size="sm"
+                                className="bg-gradient-primary"
+                              >
+                                Create Curriculum
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => {
+                                  setIsCreatingCurriculum(false);
+                                  setNewCurriculumName('');
+                                  setNewCurriculumDescription('');
+                                  setCurriculumError('');
+                                }}
+                                size="sm"
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
             {/* File Upload Section */}
             <Card>
               <CardHeader>
@@ -380,7 +574,7 @@ export default function AddBook() {
               </Button>
               <Button
                 type="submit"
-                disabled={isUploading || !bookFile}
+                disabled={isUploading || !bookFile || !selectedCurriculumId}
                 className="flex-1 bg-gradient-primary"
               >
                 {isUploading ? (

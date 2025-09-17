@@ -1,7 +1,8 @@
 import { apiClient, API_ENDPOINTS } from './api';
 import type {
   Book,
-  Category,
+  Curriculum,
+  CurriculumCreateRequest,
   ChatRequest,
   ChatResponse,
   QuestionGenerationRequest,
@@ -16,24 +17,32 @@ import type {
   UploadProgress
 } from './types';
 
-// Books & Categories Service
+// Books Service
 export class BooksService {
   static async uploadBook(
     file: File,
+    curriculumId: number,
     onProgress?: (progress: UploadProgress) => void
   ): Promise<Book> {
     const formData = new FormData();
     formData.append('file', file);
 
-    // For progress tracking, we'd need to use XMLHttpRequest
-    // For now, using the simpler fetch approach
-    return apiClient.postFormData<Book>(API_ENDPOINTS.UPLOAD_BOOK, formData);
+    const endpoint = `${API_ENDPOINTS.UPLOAD_BOOK}?curriculum_id=${curriculumId}`;
+    return apiClient.postFormData<Book>(endpoint, formData);
   }
 
-  static async getBooks(categoryId?: number): Promise<Book[]> {
-    const endpoint = categoryId 
-      ? `${API_ENDPOINTS.BOOKS}?category_id=${categoryId}`
-      : API_ENDPOINTS.BOOKS;
+  static async getBooks(options?: { curriculumId?: number }): Promise<Book[]> {
+    let endpoint = API_ENDPOINTS.BOOKS;
+    const params = new URLSearchParams();
+    
+    if (options?.curriculumId) {
+      params.append('curriculum_id', options.curriculumId.toString());
+    }
+    
+    if (params.size > 0) {
+      endpoint += `?${params.toString()}`;
+    }
+    
     return apiClient.get<Book[]>(endpoint);
   }
 
@@ -44,9 +53,32 @@ export class BooksService {
   static async deleteBook(id: number): Promise<{ message: string }> {
     return apiClient.delete<{ message: string }>(API_ENDPOINTS.DELETE_BOOK(id));
   }
+}
 
-  static async getCategories(): Promise<Category[]> {
-    return apiClient.get<Category[]>(API_ENDPOINTS.CATEGORIES);
+// Curriculum Service
+export class CurriculumService {
+  static async createCurriculum(curriculum: CurriculumCreateRequest): Promise<Curriculum> {
+    return apiClient.post<Curriculum>(API_ENDPOINTS.CURRICULUMS, curriculum);
+  }
+
+  static async getCurriculums(): Promise<Curriculum[]> {
+    return apiClient.get<Curriculum[]>(API_ENDPOINTS.CURRICULUMS);
+  }
+
+  static async getCurriculumById(id: number): Promise<Curriculum> {
+    return apiClient.get<Curriculum>(API_ENDPOINTS.CURRICULUM_BY_ID(id));
+  }
+
+  static async updateCurriculum(id: number, curriculum: CurriculumCreateRequest): Promise<Curriculum> {
+    return apiClient.put<Curriculum>(API_ENDPOINTS.CURRICULUM_BY_ID(id), curriculum);
+  }
+
+  static async deleteCurriculum(id: number): Promise<{ message: string }> {
+    return apiClient.delete<{ message: string }>(API_ENDPOINTS.DELETE_CURRICULUM(id));
+  }
+
+  static async getCurriculumBooks(id: number): Promise<Book[]> {
+    return apiClient.get<Book[]>(API_ENDPOINTS.CURRICULUM_BOOKS(id));
   }
 }
 
@@ -69,13 +101,20 @@ export class ChatService {
 export class SessionService {
   static async createSession(
     userId: string,
-    bookTitle: string,
-    sessionName?: string
+    bookTitleOrCurriculum: string,
+    sessionName?: string,
+    isCurriculum: boolean = false
   ): Promise<ChatSession> {
     // Build query parameters to match FastAPI endpoint signature
     const params = new URLSearchParams();
     params.append('user_id', userId);
-    params.append('book_title', bookTitle);
+    
+    if (isCurriculum) {
+      params.append('curriculum_name', bookTitleOrCurriculum);
+    } else {
+      params.append('book_title', bookTitleOrCurriculum);
+    }
+    
     if (sessionName) {
       params.append('session_name', sessionName);
     }
@@ -144,27 +183,28 @@ export class ScriptsService {
 // Utility functions
 export class Utils {
   static generateUserId(): string {
-    // Generate a simple user ID for now
+    // Generate a proper UUID for database compatibility
     let userId = localStorage.getItem('zakerly_user_id');
+    
+    // Check if existing userId is in old format and clear it
+    if (userId && (userId.startsWith('user_') || userId.length < 32)) {
+      localStorage.removeItem('zakerly_user_id');
+      userId = null;
+    }
+    
     if (!userId) {
-      userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      // Generate a proper UUID v4
+      userId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        const r = Math.random() * 16 | 0;
+        const v = c == 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+      });
       localStorage.setItem('zakerly_user_id', userId);
     }
     return userId;
   }
 
-  static getCategoryName(categoryId: number): string {
-    const categoryMap: Record<number, string> = {
-      1: 'Mathematics',
-      2: 'Science',
-      3: 'Physics',
-      4: 'Chemistry',
-      5: 'History',
-      6: 'Geology',
-      7: 'General'
-    };
-    return categoryMap[categoryId] || 'Unknown';
-  }
+
 
   static formatFileSize(bytes: number): string {
     if (bytes === 0) return '0 Bytes';

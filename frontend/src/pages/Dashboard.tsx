@@ -35,7 +35,7 @@ interface Book {
   id: number;
   title: string;
   author?: string;
-  category_id: number;
+  curriculum_id: number;
   created_at: string;
 }
 

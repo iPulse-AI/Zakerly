@@ -323,38 +323,182 @@ Please generate a complete, professional lecture script following the specified 
             MessagesPlaceholder(variable_name="agent_scratchpad")
         ])
 
+        # Agent-based question generation prompts
+        self.curriculum_question_prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are a professional exam author and AI education specialist. Your task is to generate high-quality exam questions using the curriculum_question_generator tool to retrieve content from the entire curriculum.
+
+**YOUR MISSION:**
+Generate comprehensive exam questions that test knowledge across the entire curriculum, covering multiple books and subject areas within the curriculum.
+
+**CRITICAL PARAMETER ADHERENCE:**
+1. Generate EXACTLY the requested number of questions (no more, no less)
+2. Use EXACTLY the requested difficulty levels (if user wants "hard", ALL questions must be hard)
+3. Use EXACTLY the requested question types (only use the types specified)
+4. If multiple values given for a parameter, distribute evenly across them
+5. STRICTLY follow the user's exam specifications
+
+**MANDATORY PROCESS:**
+1. FIRST: Use the curriculum_question_generator tool with relevant topic queries to retrieve content
+2. THEN: Generate questions based on the retrieved curriculum content
+3. FINALLY: Return questions in the exact JSON format specified
+
+**EXAM SPECIFICATIONS:**
+- Generate questions covering diverse topics from across the curriculum
+- Ensure questions represent multiple books/materials in the curriculum  
+- Create questions appropriate for comprehensive curriculum assessment
+- Follow ALL difficulty and question type requirements EXACTLY
+- Ensure broad coverage rather than narrow focus
+
+**QUESTION FORMATTING RULES:**
+❌ NEVER include book names, guide titles, or document references in questions
+❌ WRONG: "According to the Dell Data Lakehouse Guide, explain..."
+❌ WRONG: "As described in the Network Security Handbook..."
+❌ WRONG: "Referencing the Cloud Computing Manual..."
+
+✅ ALWAYS keep questions general and concept-focused
+✅ CORRECT: "Explain the trade-offs between cloud storage and on-premises storage."
+✅ CORRECT: "What are the key principles of network security?"
+✅ CORRECT: "Describe the benefits of containerization in modern applications."
+
+**RESPONSE FORMAT:**
+Your response MUST be a JSON array of question objects. Each question must have:
+- "difficulty": one of "easy", "medium", or "hard" (MUST match user request)
+- "type": one of "multiple_choice_single_answer", "true_false", or "open_ended_question" (MUST match user request)
+- "question_text": The complete question text WITHOUT any book/guide references
+- "options": Array of 4 choices for multiple choice, empty array for others
+- "answer": The correct answer as a STRING
+
+**QUALITY REQUIREMENTS:**
+- University-level professional questions
+- Clear, unambiguous wording without source references
+- Technically accurate content
+- NO references to specific books, guides, manuals, or documents
+- Comprehensive curriculum coverage
+- EXACT adherence to user parameters"""),
+            ("human", "You must use the curriculum_question_generator tool first with a relevant topic query to retrieve curriculum content, then generate the requested exam questions. Do not ask for additional information - proceed immediately with the tool."),
+            MessagesPlaceholder(variable_name="agent_scratchpad")
+        ])
+
+        self.book_question_prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are a professional exam author and AI education specialist. Your task is to generate high-quality exam questions using the book_question_generator tool to retrieve content from a specific book within a curriculum.
+
+**YOUR MISSION:**
+Generate focused exam questions that test knowledge from a specific book within the curriculum context.
+
+**CRITICAL PARAMETER ADHERENCE:**
+1. Generate EXACTLY the requested number of questions (no more, no less)
+2. Use EXACTLY the requested difficulty levels (if user wants "hard", ALL questions must be hard)
+3. Use EXACTLY the requested question types (only use the types specified)
+4. If multiple values given for a parameter, distribute evenly across them
+5. STRICTLY follow the user's exam specifications
+
+**MANDATORY PROCESS:**
+1. IMMEDIATELY: Use the book_question_generator tool with a relevant topic query (e.g., "architecture", "configuration", "data processing") to retrieve content from the specific book
+2. THEN: Generate questions based on the retrieved book content
+3. FINALLY: Return questions in the exact JSON format specified
+4. DO NOT ASK FOR MORE INFORMATION - proceed automatically with the tool
+
+**EXAM SPECIFICATIONS:**
+- Focus specifically on the selected book's content
+- Create questions appropriate for book-level assessment
+- Follow ALL difficulty and question type requirements EXACTLY
+- Ensure comprehensive coverage of the book's main topics
+
+**QUESTION FORMATTING RULES:**
+❌ NEVER include book names, guide titles, or document references in questions
+❌ WRONG: "According to the Dell Data Lakehouse Guide, explain..."
+❌ WRONG: "As described in this book..."
+❌ WRONG: "Referencing the manual..."
+
+✅ ALWAYS keep questions general and concept-focused
+✅ CORRECT: "Explain the trade-offs between cloud storage and on-premises storage."
+✅ CORRECT: "What are the key principles of network security?"
+✅ CORRECT: "Describe the benefits of containerization in modern applications."
+
+**RESPONSE FORMAT:**
+Your response MUST be a JSON array of question objects. Each question must have:
+- "difficulty": one of "easy", "medium", or "hard" (MUST match user request)
+- "type": one of "multiple_choice_single_answer", "true_false", or "open_ended_question" (MUST match user request)
+- "question_text": The complete question text WITHOUT any book/guide references
+- "options": Array of 4 choices for multiple choice, empty array for others
+- "answer": The correct answer as a STRING
+
+**QUALITY REQUIREMENTS:**
+- University-level professional questions
+- Clear, unambiguous wording without source references
+- Technically accurate content
+- NO references to specific books, guides, manuals, or documents
+- Focused book coverage
+- EXACT adherence to user parameters"""),
+            ("human", "You must use the book_question_generator tool first with a relevant topic query to retrieve book content, then generate the requested exam questions. Do not ask for additional information - proceed immediately with the tool."),
+            MessagesPlaceholder(variable_name="agent_scratchpad")
+        ])
+
+        self.topic_question_prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are a professional exam author and AI education specialist. Your task is to generate high-quality exam questions using the topic_question_generator tool to retrieve content on specific topics from a book.
+
+**YOUR MISSION:**
+Generate targeted exam questions that test knowledge on specific topics within a book, ensuring deep coverage of the specified subject areas.
+
+**CRITICAL PARAMETER ADHERENCE:**
+1. Generate EXACTLY the requested number of questions (no more, no less)
+2. Use EXACTLY the requested difficulty levels (if user wants "hard", ALL questions must be hard)
+3. Use EXACTLY the requested question types (only use the types specified)
+4. If multiple values given for a parameter, distribute evenly across them
+5. STRICTLY follow the user's exam specifications
+
+**MANDATORY PROCESS:**
+1. FIRST: Use the topic_question_generator tool with queries related to the specific topics
+2. THEN: Generate questions based on the retrieved topic-specific content
+3. FINALLY: Return questions in the exact JSON format specified
+
+**EXAM SPECIFICATIONS:**
+- Focus exclusively on the specified topics
+- Create questions that test deep understanding of the topic areas
+- Follow ALL difficulty and question type requirements EXACTLY
+- Ensure comprehensive coverage of the specified topics only
+
+**QUESTION FORMATTING RULES:**
+❌ NEVER include book names, guide titles, or document references in questions
+❌ WRONG: "According to the Dell Data Lakehouse Guide, explain..."
+❌ WRONG: "As described in this manual..."
+❌ WRONG: "Referencing the documentation..."
+
+✅ ALWAYS keep questions general and concept-focused
+✅ CORRECT: "Explain the trade-offs between cloud storage and on-premises storage."
+✅ CORRECT: "What are the key principles of network security?"
+✅ CORRECT: "Describe the benefits of containerization in modern applications."
+
+**RESPONSE FORMAT:**
+Your response MUST be a JSON array of question objects. Each question must have:
+- "difficulty": one of "easy", "medium", or "hard" (MUST match user request)
+- "type": one of "multiple_choice_single_answer", "true_false", or "open_ended_question" (MUST match user request)
+- "question_text": The complete question text WITHOUT any book/guide references
+- "options": Array of 4 choices for multiple choice, empty array for others
+- "answer": The correct answer as a STRING
+
+**QUALITY REQUIREMENTS:**
+- University-level professional questions
+- Clear, unambiguous wording without source references
+- Technically accurate content
+- NO references to specific books, guides, manuals, or documents
+- Targeted topic coverage only
+- EXACT adherence to user parameters"""),
+            ("human", "You must use the topic_question_generator tool first with the specified topics to retrieve relevant content, then generate the requested exam questions. Do not ask for additional information - proceed immediately with the tool."),
+            MessagesPlaceholder(variable_name="agent_scratchpad")
+        ])
+
     async def handle_chat(self, request: ChatRequest) -> ChatResponse:
-        """Handle chat request with intent routing"""
+        """Handle chat request with curriculum-based routing"""
         try:
-            # First, determine the intent
-            intent_result = await self._classify_intent(request.book_title, request.user_message)
-            intent = intent_result.get('intent', 'answer_question')
+            # For now, let's handle simple Q&A with curriculum
+            intent = request.intent or "answer_question"
             
-            # Get or create session
-            session = await self._get_or_create_session(request.session_id, request.book_title)
+            # Get or create session for curriculum
+            session = await self._get_or_create_curriculum_session(request.session_id, request.curriculum)
             
-            # Route based on intent
-            if intent == "generate_questions":
-                # Handle question generation
-                question_request = QuestionGenerationRequest(
-                    book_title=request.book_title,
-                    user_message=request.user_message
-                )
-                question_response = await self.generate_questions(question_request)
-                response_text = self._format_questions_response(question_response)
-                
-            elif intent == "generate_lecture":
-                # Handle lecture generation
-                lecture_request = LectureRequest(
-                    book_title=request.book_title,
-                    user_message=request.user_message,
-                    topic=None  # Will be determined by the service
-                )
-                response_text = await self.generate_lecture(lecture_request)
-                
-            else:
-                # Handle regular Q&A
-                response_text = await self._handle_question_answering(request, session)
+            # Handle Q&A with curriculum context
+            response_text = await self._handle_curriculum_question_answering(request, session)
             
             # Save messages to database
             await self.db.add_chat_message(
@@ -371,7 +515,7 @@ Please generate a complete, professional lecture script following the specified 
                 response=response_text,
                 session_id=str(session['id']),
                 intent=intent,
-                metadata={"book_title": request.book_title}
+                metadata={"curriculum": request.curriculum}
             )
             
         except Exception as e:
@@ -526,52 +670,350 @@ End your response with: `(Source: Internal Knowledge Base)` or `(Source: Web Sea
             return f"I apologize, but I encountered an error while processing your question: {str(e)}"
 
     def _create_knowledge_search_tool(self, book_title: str) -> Tool:
-        """Create knowledge base search tool"""
+        """Create curriculum-based knowledge search tool"""
         
         def search_knowledge(query: str) -> str:
             try:
-                # Use the full book title as table name (no sanitization)
-                table_name = book_title.lower()
-                
-                logger.info(f"Searching for book '{book_title}' using table '{table_name}' with query '{query[:50]}...'")
-                
-                # Set the current book title for context in search
-                self._current_book_title = book_title
-                
-                # Run the async search in a synchronous context
+                # Get book information to find its curriculum
                 import asyncio
+                
+                # Run async operation to get book info
                 try:
-                    # Try to get the current event loop
                     loop = asyncio.get_event_loop()
                     if loop.is_running():
-                        # If loop is running, we need to run in a thread
                         import concurrent.futures
                         with concurrent.futures.ThreadPoolExecutor() as executor:
-                            future = executor.submit(asyncio.run, self._search_vector_table(table_name, query, k=6))
+                            future = executor.submit(asyncio.run, self._get_book_curriculum_info(book_title))
+                            book_info = future.result()
+                    else:
+                        book_info = loop.run_until_complete(self._get_book_curriculum_info(book_title))
+                except RuntimeError:
+                    book_info = asyncio.run(self._get_book_curriculum_info(book_title))
+                
+                if not book_info:
+                    return f"Book '{book_title}' not found in the system. Please ensure the book has been uploaded and processed."
+                
+                curriculum_name = book_info.get('curriculum_name')
+                if not curriculum_name:
+                    return f"No curriculum information found for book '{book_title}'. The book may not have been properly processed with the new curriculum system."
+                
+                logger.info(f"Searching in curriculum '{curriculum_name}' for book '{book_title}' with query '{query[:50]}...'")
+                
+                # Search curriculum embeddings
+                try:
+                    if loop.is_running():
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            future = executor.submit(asyncio.run, self._search_curriculum_embeddings(curriculum_name, query, k=6))
                             results = future.result()
                     else:
-                        # If no loop is running, we can run directly
-                        results = loop.run_until_complete(self._search_vector_table(table_name, query, k=6))
+                        results = loop.run_until_complete(self._search_curriculum_embeddings(curriculum_name, query, k=6))
                 except RuntimeError:
-                    # No event loop, create a new one
-                    results = asyncio.run(self._search_vector_table(table_name, query, k=6))
+                    results = asyncio.run(self._search_curriculum_embeddings(curriculum_name, query, k=6))
                 
                 if results:
-                    combined_results = "\n\n".join(results)
-                    logger.info(f"Found {len(results)} relevant chunks for query: {query[:50]}...")
+                    combined_results = "\n\n".join([r['content'] for r in results])
+                    logger.info(f"Found {len(results)} relevant chunks in curriculum '{curriculum_name}' for query: {query[:50]}...")
                     return combined_results
                 else:
-                    logger.warning(f"No relevant information found for query: {query[:50]}...")
-                    return f"No relevant information found in the knowledge base for '{book_title}'. The book may not have been properly ingested or the vector table may be missing. Please check if the book has been uploaded and processed correctly."
+                    logger.warning(f"No relevant information found in curriculum '{curriculum_name}' for query: {query[:50]}...")
+                    return f"No relevant information found in curriculum '{curriculum_name}' for the query. The curriculum may not have sufficient content or the embeddings may not be properly indexed."
                 
             except Exception as e:
-                logger.error(f"Error searching knowledge base for '{book_title}': {e}")
-                return f"Error accessing knowledge base for '{book_title}': {str(e)}. This may indicate that the book has not been properly ingested or there's a database connectivity issue."
+                logger.error(f"Error searching curriculum knowledge base for '{book_title}': {e}")
+                return f"Error accessing curriculum knowledge base for '{book_title}': {str(e)}. This may indicate a database connectivity issue or the curriculum system needs attention."
         
         return Tool(
             name="search_internal_knowledge_base",
-            description=f"Search in the knowledge base for the book '{book_title}' to find relevant information. Input should be a search query string only.",
+            description=f"Search in the curriculum-based knowledge base for the book '{book_title}' to find relevant information. Input should be a search query string only.",
             func=search_knowledge
+        )
+
+    def _create_curriculum_knowledge_search_tool(self, curriculum_name: str) -> Tool:
+        """Create curriculum-based knowledge search tool that searches across all books in the curriculum"""
+        
+        def search_curriculum_knowledge(query: str) -> str:
+            try:
+                import asyncio
+                
+                logger.info(f"🔍 TOOL CALLED: search_curriculum_knowledge_base for curriculum '{curriculum_name}' with query '{query[:50]}...'")
+                
+                # Search curriculum embeddings directly
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            future = executor.submit(asyncio.run, self._search_curriculum_embeddings(curriculum_name, query, k=8))
+                            results = future.result()
+                    else:
+                        results = loop.run_until_complete(self._search_curriculum_embeddings(curriculum_name, query, k=8))
+                except RuntimeError:
+                    results = asyncio.run(self._search_curriculum_embeddings(curriculum_name, query, k=8))
+                
+                if results:
+                    combined_results = "\n\n".join([r['content'] for r in results])
+                    logger.info(f"✅ VECTOR SEARCH SUCCESS: Found {len(results)} relevant chunks in curriculum '{curriculum_name}' for query: {query[:50]}...")
+                    return combined_results
+                else:
+                    logger.warning(f"❌ VECTOR SEARCH EMPTY: No relevant information found in curriculum '{curriculum_name}' for query: {query[:50]}...")
+                    return f"No relevant information found in curriculum '{curriculum_name}' for the query. The curriculum may not have sufficient content or the embeddings may not be properly indexed."
+                
+            except Exception as e:
+                logger.error(f"Error searching curriculum knowledge base for '{curriculum_name}': {e}")
+                return f"Error accessing curriculum knowledge base for '{curriculum_name}': {str(e)}. This may indicate a database connectivity issue or the curriculum system needs attention."
+        
+        return Tool(
+            name="search_curriculum_knowledge_base",
+            description=f"MANDATORY TOOL: Search the '{curriculum_name}' curriculum database for relevant information. This tool contains all the books and materials for the {curriculum_name} curriculum. You MUST use this tool first before answering any question. Input: a search query string related to the user's question.",
+            func=search_curriculum_knowledge
+        )
+
+    async def _get_book_curriculum_info(self, book_title: str) -> Optional[Dict[str, Any]]:
+        """Get book information including curriculum"""
+        try:
+            book_info = await self.db.get_book_by_title(book_title)
+            return book_info
+        except Exception as e:
+            logger.error(f"Error getting book curriculum info for '{book_title}': {e}")
+            return None
+    
+    async def _search_curriculum_embeddings(self, curriculum_name: str, query: str, k: int = 6) -> List[Dict[str, Any]]:
+        """Search curriculum-based embeddings"""
+        try:
+            # Generate embedding for the query
+            query_embedding = await self.embeddings.aembed_query(query)
+            
+            # Search in curriculum embedding table
+            results = await self.db.search_curriculum_embeddings(curriculum_name, query_embedding, limit=k)
+            
+            logger.info(f"Retrieved {len(results)} chunks from curriculum '{curriculum_name}'")
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error in curriculum embedding search for '{curriculum_name}': {e}")
+            return []
+
+    async def _search_book_embeddings(self, curriculum_name: str, book_title: str, query: str, k: int = 6) -> List[Dict[str, Any]]:
+        """Search embeddings for a specific book within curriculum"""
+        try:
+            logger.info(f"🔍 Searching book '{book_title}' in curriculum '{curriculum_name}' for query '{query}'")
+            
+            # First get the book_id from the book title
+            book_info = await self._get_book_curriculum_info(book_title)
+            if not book_info:
+                logger.warning(f"Book '{book_title}' not found, falling back to general search")
+                return await self._search_curriculum_embeddings(curriculum_name, query, k)
+            
+            logger.info(f"🔍 Book info retrieved: {book_info}")
+            book_id = book_info.get('id')  # The book ID field is 'id', not 'book_id'
+            if not book_id:
+                logger.warning(f"Book ID not found for '{book_title}' in book_info: {book_info}, falling back to general search")
+                return await self._search_curriculum_embeddings(curriculum_name, query, k)
+            
+            # Generate embedding for the query
+            query_embedding = await self.embeddings.aembed_query(query)
+            
+            # Search specifically in this book's embeddings
+            results = await self.db.search_book_specific_embeddings(curriculum_name, book_id, query_embedding, limit=k)
+            
+            logger.info(f"✅ Retrieved {len(results)} chunks from book '{book_title}' (ID: {book_id})")
+            return results
+            
+        except Exception as e:
+            logger.error(f"❌ Error in book embedding search for '{book_title}': {e}")
+            # Fallback to general curriculum search
+            return await self._search_curriculum_embeddings(curriculum_name, query, k)
+
+    def _create_curriculum_question_tool(self, curriculum_name: str, exam_parameters: Dict[str, Any]) -> Tool:
+        """Create agent tool for generating questions from entire curriculum"""
+        
+        def generate_curriculum_questions(topic_query: str) -> str:
+            try:
+                import asyncio
+                
+                logger.info(f"🎯 CURRICULUM QUESTION TOOL: Generating questions for curriculum '{curriculum_name}' on topic '{topic_query}'")
+                logger.info(f"📋 Parameters: {exam_parameters}")
+                
+                # Search curriculum embeddings
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            future = executor.submit(asyncio.run, self._search_curriculum_embeddings(curriculum_name, topic_query, k=12))
+                            results = future.result()
+                    else:
+                        results = loop.run_until_complete(self._search_curriculum_embeddings(curriculum_name, topic_query, k=12))
+                except RuntimeError:
+                    results = asyncio.run(self._search_curriculum_embeddings(curriculum_name, topic_query, k=12))
+                
+                if results:
+                    # Get content from multiple books in curriculum
+                    content_chunks = [r['content'] for r in results]
+                    combined_content = "\n\n".join(content_chunks[:10])  # Limit to prevent context overflow
+                    
+                    return f"""CURRICULUM CONTENT RETRIEVED:
+                    
+Topic: {topic_query}
+Curriculum: {curriculum_name}
+Exam Parameters: {exam_parameters}
+
+Content from curriculum books:
+{combined_content}
+
+Please generate {exam_parameters.get('count', 10)} exam questions based on this curriculum content with:
+- Difficulty levels: {', '.join(exam_parameters.get('difficulty', ['medium']))}
+- Question types: {', '.join(exam_parameters.get('question_types', ['multiple_choice_single_answer']))}
+- Time limit: {exam_parameters.get('time_limit', 30)} minutes total
+- Scope: Comprehensive curriculum coverage across multiple books"""
+                else:
+                    return f"No content found in curriculum '{curriculum_name}' for topic '{topic_query}'. Please try a different search term."
+                    
+            except Exception as e:
+                logger.error(f"Error in curriculum question tool: {e}")
+                return f"Error retrieving curriculum content: {str(e)}"
+        
+        return Tool(
+            name="curriculum_question_generator",
+            description=f"Generate exam questions from the entire '{curriculum_name}' curriculum covering all books and materials. Input should be a topic or subject area to focus on.",
+            func=generate_curriculum_questions
+        )
+
+    def _create_book_question_tool(self, book_title: str, curriculum_name: str, exam_parameters: Dict[str, Any]) -> Tool:
+        """Create agent tool for generating questions from specific book within curriculum"""
+        
+        def generate_book_questions(topic_query: str) -> str:
+            try:
+                import asyncio
+                
+                logger.info(f"📚 BOOK QUESTION TOOL: Generating questions for book '{book_title}' in curriculum '{curriculum_name}' on topic '{topic_query}'")
+                logger.info(f"📋 Parameters: {exam_parameters}")
+                
+                # Search specific book content using book-specific search
+                # Use broader search terms to ensure we find content
+                if not topic_query or topic_query.strip() == "":
+                    search_query = "data lakehouse architecture configuration storage performance"
+                else:
+                    search_query = f"{topic_query} data lakehouse architecture configuration"
+                
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            future = executor.submit(asyncio.run, self._search_book_embeddings(curriculum_name, book_title, search_query, k=8))
+                            results = future.result()
+                    else:
+                        results = loop.run_until_complete(self._search_book_embeddings(curriculum_name, book_title, search_query, k=8))
+                except RuntimeError:
+                    results = asyncio.run(self._search_book_embeddings(curriculum_name, book_title, search_query, k=8))
+                
+                if results:
+                    # Results are already filtered by book_id, so use them directly
+                    content_chunks = [r['content'] for r in results]
+                    combined_content = "\n\n".join(content_chunks[:8])
+                    
+                    logger.info(f"✅ Found {len(results)} relevant content chunks from '{book_title}'")
+                else:
+                    logger.warning(f"⚠️ No content found for book '{book_title}' on topic '{topic_query}'")
+                    combined_content = f"No specific content found for topic '{topic_query}' in book '{book_title}'. Please generate general questions about the topic."
+                    
+                return f"""BOOK CONTENT RETRIEVED:
+                    
+Book: {book_title}
+Curriculum: {curriculum_name}
+Topic: {topic_query}
+Exam Parameters: {exam_parameters}
+
+Content from "{book_title}":
+{combined_content}
+
+Please generate {exam_parameters.get('count', 10)} exam questions based specifically on this book content with:
+- Difficulty levels: {', '.join(exam_parameters.get('difficulty', ['medium']))}
+- Question types: {', '.join(exam_parameters.get('question_types', ['multiple_choice_single_answer']))}
+- Time limit: {exam_parameters.get('time_limit', 30)} minutes total
+- Scope: Focus specifically on "{book_title}" content"""
+                    
+            except Exception as e:
+                logger.error(f"Error in book question tool: {e}")
+                return f"Error retrieving book content: {str(e)}"
+        
+        return Tool(
+            name="book_question_generator",
+            description=f"Generate exam questions specifically from the book '{book_title}' within the '{curriculum_name}' curriculum. Input should be a topic or concept to focus on within this book.",
+            func=generate_book_questions
+        )
+
+    def _create_topic_question_tool(self, book_title: str, curriculum_name: str, specific_topics: str, exam_parameters: Dict[str, Any]) -> Tool:
+        """Create agent tool for generating questions on specific topics from a book"""
+        
+        def generate_topic_questions(search_query: str) -> str:
+            try:
+                import asyncio
+                
+                logger.info(f"🎯 TOPIC QUESTION TOOL: Generating questions for specific topics '{specific_topics}' in book '{book_title}'")
+                logger.info(f"📋 Parameters: {exam_parameters}")
+                
+                # Use book-specific search with topic keywords
+                search_query_enhanced = f"{specific_topics} {search_query}"
+                
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            future = executor.submit(asyncio.run, self._search_book_embeddings(curriculum_name, book_title, search_query_enhanced, k=8))
+                            results = future.result()
+                    else:
+                        results = loop.run_until_complete(self._search_book_embeddings(curriculum_name, book_title, search_query_enhanced, k=8))
+                except RuntimeError:
+                    results = asyncio.run(self._search_book_embeddings(curriculum_name, book_title, search_query_enhanced, k=8))
+                
+                if results:
+                    # Filter and prioritize results that match the specific topics
+                    topic_keywords = [t.strip().lower() for t in specific_topics.split(',')]
+                    scored_results = []
+                    
+                    for r in results:
+                        content_lower = r.get('content', '').lower()
+                        score = sum(1 for keyword in topic_keywords if keyword in content_lower)
+                        scored_results.append((score, r))
+                    
+                    # Sort by relevance to topics
+                    scored_results.sort(key=lambda x: x[0], reverse=True)
+                    relevant_results = [r[1] for r in scored_results[:6]]
+                    
+                    content_chunks = [r['content'] for r in relevant_results]
+                    combined_content = "\n\n".join(content_chunks)
+                    
+                    return f"""TOPIC-SPECIFIC CONTENT RETRIEVED:
+                    
+Book: {book_title}
+Curriculum: {curriculum_name}
+Specific Topics: {specific_topics}
+Search Query: {search_query}
+Exam Parameters: {exam_parameters}
+
+Content related to specified topics:
+{combined_content}
+
+Please generate {exam_parameters.get('count', 10)} exam questions focused SPECIFICALLY on these topics: {specific_topics}
+Requirements:
+- Difficulty levels: {', '.join(exam_parameters.get('difficulty', ['medium']))}
+- Question types: {', '.join(exam_parameters.get('question_types', ['multiple_choice_single_answer']))}
+- Time limit: {exam_parameters.get('time_limit', 30)} minutes total
+- Scope: Targeted assessment of the specified topics only"""
+                else:
+                    return f"No content found for topics '{specific_topics}' in book '{book_title}'. Please try broader search terms."
+                    
+            except Exception as e:
+                logger.error(f"Error in topic question tool: {e}")
+                return f"Error retrieving topic-specific content: {str(e)}"
+        
+        return Tool(
+            name="topic_question_generator",
+            description=f"Generate exam questions on specific topics '{specific_topics}' from the book '{book_title}'. Input should be related concepts or keywords to enhance topic coverage.",
+            func=generate_topic_questions
         )
 
     async def _search_vector_table(self, table_name: str, query: str, k: int = 6) -> List[str]:
@@ -715,93 +1157,105 @@ End your response with: `(Source: Internal Knowledge Base)` or `(Source: Web Sea
         )
 
     async def generate_questions(self, request: QuestionGenerationRequest) -> QuestionResponse:
-        """Generate questions for a book based on comprehensive exam parameters"""
+        """Generate questions using AI agents for curriculum, book, or topic-specific exams"""
         try:
-            logger.info(f"Question generation request for book: {request.book_title}")
+            logger.info(f"🎯 AGENT-BASED QUESTION GENERATION STARTED")
+            logger.info(f"Request: curriculum_id={request.curriculum_id}, book={request.book_title}, scope={request.scope_type}")
             logger.info(f"Parameters: count={request.count}, difficulty={request.difficulty}, types={request.question_types}")
-            logger.info(f"Scope: {request.scope_type}, Topics: {request.specific_topics}, Time: {request.time_limit}min")
+            logger.info(f"Topics: {request.specific_topics}, Time: {request.time_limit}min")
             
-            # Use user-specified parameters directly
-            user_count = request.count or 10
-            user_difficulty = request.difficulty or ['medium']
-            user_question_types = request.question_types or ['multiple_choice_single_answer']
-            
-            # Determine content scope for question generation
-            if hasattr(request, 'scope_type') and request.scope_type == 'specific_topics' and hasattr(request, 'specific_topics') and request.specific_topics:
-                # Focus on specific topics provided by user
-                topic_list = [topic.strip() for topic in request.specific_topics.split(',') if topic.strip()]
-                if not topic_list:
-                    topic_list = [request.specific_topics]
-                logger.info(f"Generating questions for specific topics: {topic_list}")
-                main_topic = ', '.join(topic_list)
-            else:
-                # Analyze the request to extract topics if needed, or use whole book approach
-                logger.info("Generating questions for whole book content")
-                analysis_chain = self.analysis_prompt | self.get_current_llm() | StrOutputParser()
-                
-                try:
-                    analysis_result = await analysis_chain.ainvoke({
-                        "user_message": request.user_message
-                    })
-                except Exception as e:
-                    error_str = str(e).lower()
-                    if "quota" in error_str or "429" in error_str or "rate limit" in error_str:
-                        logger.warning(f"Google Gemini quota exceeded during analysis: {e}")
-                        if not self.use_fallback:
-                            self.switch_to_fallback()
-                            analysis_chain = self.analysis_prompt | self.get_current_llm() | StrOutputParser()
-                            analysis_result = await analysis_chain.ainvoke({
-                                "user_message": request.user_message
-                            })
-                        else:
-                            raise e
-                    else:
-                        raise e
-                
-                # Parse analysis result
-                try:
-                    analysis_data = json.loads(analysis_result.strip().replace('```json\n', '').replace('\n```', ''))
-                    topics = analysis_data.get('topics', [])
-                except:
-                    topics = []
-                
-                # If no topics specified, get some from the book or use general approach
-                if not topics:
-                    topics = await self._extract_topics_from_book(request.book_title)
-                
-                main_topic = topics[0] if topics else "comprehensive book content and main concepts"
-                topic_list = [main_topic]
-            
-            # Generate all questions with enhanced parameters
-            parameters = {
-                'count': user_count,
-                'difficulty': user_difficulty,
-                'question_types': user_question_types,
-                'scope_type': getattr(request, 'scope_type', 'whole_book'),
-                'specific_topics': getattr(request, 'specific_topics', None),
-                'time_limit': getattr(request, 'time_limit', None),
-                'user_message': request.user_message
+            # Prepare exam parameters
+            exam_parameters = {
+                'count': request.count or 10,
+                'difficulty': request.difficulty or ['medium'],
+                'question_types': request.question_types or ['multiple_choice_single_answer'],
+                'time_limit': request.time_limit or 30,
+                'user_message': request.user_message or '',
+                'specific_topics': request.specific_topics or ''
             }
             
-            # Generate questions using the determined topic(s)
-            all_questions = await self._generate_questions_for_topic(
-                request.book_title, 
-                main_topic, 
-                parameters
-            )
+            # Case 1: Whole Curriculum Exam
+            if request.scope_type == 'whole_curriculum' and request.curriculum_id:
+                logger.info("🌟 CASE 1: Generating questions for WHOLE CURRICULUM")
+                
+                # Get curriculum information
+                curriculum_info = await self.db.get_curriculum_by_id(int(request.curriculum_id))
+                if not curriculum_info:
+                    raise ValueError(f"Curriculum with ID {request.curriculum_id} not found")
+                
+                curriculum_name = curriculum_info['name']
+                
+                # Call agent-based curriculum question generation
+                all_questions = await self._generate_questions_with_curriculum_agent(
+                    curriculum_name, exam_parameters
+                )
+                
+                logger.info(f"✅ Generated {len(all_questions)} questions for curriculum {curriculum_name}")
+                
+                return QuestionResponse(
+                    chapter=f"{curriculum_name} Curriculum - Comprehensive Exam",
+                    questions_generated=all_questions
+                )
             
-            logger.info(f"Successfully generated {len(all_questions)} questions for {request.book_title}")
+            # Case 2: Single Book Exam
+            elif request.scope_type == 'whole_book' and request.book_title:
+                logger.info("📚 CASE 2: Generating questions for SINGLE BOOK")
+                
+                # Get curriculum context for the book
+                book_info = await self._get_book_curriculum_info(request.book_title)
+                curriculum_name = book_info.get('curriculum_name') if book_info else 'IT Curriculum'
+                
+                # Call agent-based book question generation
+                all_questions = await self._generate_questions_with_book_agent(
+                    request.book_title, curriculum_name, exam_parameters
+                )
+                
+                logger.info(f"✅ Generated {len(all_questions)} questions for book {request.book_title}")
+                
+                return QuestionResponse(
+                    chapter=f"{request.book_title} - Comprehensive Book Exam",
+                    questions_generated=all_questions
+                )
             
-            if len(all_questions) == 0:
-                logger.warning("No questions were generated - this may indicate an issue with content retrieval or AI generation")
+            # Case 3: Specific Topics Exam
+            elif request.scope_type == 'specific_topics' and request.specific_topics:
+                logger.info("🎯 CASE 3: Generating questions for SPECIFIC TOPICS")
+                
+                # Get curriculum context for the book
+                book_title = request.book_title or 'General Book'
+                book_info = await self._get_book_curriculum_info(book_title)
+                curriculum_name = book_info.get('curriculum_name') if book_info else 'IT Curriculum'
+                
+                # Call agent-based topic question generation
+                all_questions = await self._generate_questions_with_topic_agent(
+                    book_title, curriculum_name, request.specific_topics, exam_parameters
+                )
+                
+                logger.info(f"✅ Generated {len(all_questions)} questions for topics: {request.specific_topics}")
+                
+                return QuestionResponse(
+                    chapter=f"{book_title} - {request.specific_topics}",
+                    questions_generated=all_questions
+                )
             
-            return QuestionResponse(
-                chapter=f"{request.book_title} - {main_topic}",
-                questions_generated=all_questions
-            )
+            else:
+                # Fallback: Default to book-based generation
+                logger.info("🔄 FALLBACK: Using book-based generation")
+                book_title = request.book_title or 'General Content'
+                book_info = await self._get_book_curriculum_info(book_title)
+                curriculum_name = book_info.get('curriculum_name') if book_info else 'IT Curriculum'
+                
+                all_questions = await self._generate_questions_with_book_agent(
+                    book_title, curriculum_name, exam_parameters
+                )
+                
+                return QuestionResponse(
+                    chapter=f"{book_title} - General Exam",
+                    questions_generated=all_questions
+                )
             
         except Exception as e:
-            logger.error(f"Error generating questions: {e}")
+            logger.error(f"❌ Error in agent-based question generation: {e}")
             raise
 
     async def _extract_topics_from_book(self, book_title: str) -> List[str]:
@@ -824,18 +1278,906 @@ End your response with: `(Source: Internal Knowledge Base)` or `(Source: Web Sea
             logger.error(f"Error extracting topics: {e}")
             return ["General Topics"]
 
+    async def _generate_questions_with_curriculum_agent(self, curriculum_name: str, exam_parameters: Dict[str, Any]) -> List[Question]:
+        """Generate questions using agent that searches entire curriculum"""
+        try:
+            logger.info(f"🌟 Creating curriculum agent for '{curriculum_name}'")
+            
+            # Create curriculum question generation tool
+            curriculum_tool = self._create_curriculum_question_tool(curriculum_name, exam_parameters)
+            tools = [curriculum_tool]
+            
+            # Create agent with curriculum-specific prompt
+            current_llm = self.get_current_llm()
+            agent = create_tool_calling_agent(current_llm, tools, self.curriculum_question_prompt)
+            agent_executor = AgentExecutor(
+                agent=agent,
+                tools=tools,
+                verbose=True,
+                handle_parsing_errors=True,
+                max_iterations=3,
+                return_intermediate_steps=False
+            )
+            
+            # Execute agent to generate questions
+            logger.info("🚀 Executing curriculum question generation agent")
+            
+            # Create detailed instruction with all parameters
+            difficulty_str = ", ".join(exam_parameters['difficulty']) if isinstance(exam_parameters['difficulty'], list) else exam_parameters['difficulty']
+            types_str = ", ".join(exam_parameters['question_types']) if isinstance(exam_parameters['question_types'], list) else exam_parameters['question_types']
+            
+            detailed_instruction = f"""You must generate EXACTLY {exam_parameters['count']} exam questions for the {curriculum_name} curriculum.
+
+MANDATORY REQUIREMENTS:
+- Number of questions: EXACTLY {exam_parameters['count']} (no more, no less)
+- Difficulty level(s): {difficulty_str} (use ONLY these difficulty levels)
+- Question type(s): {types_str} (use ONLY these question types)
+- Time limit: {exam_parameters['time_limit']} minutes total
+- DO NOT mention any book names, guide titles, or document references in questions
+- Keep all questions general and concept-focused
+
+STEP 1: Call the curriculum_question_generator tool with topic "IT concepts programming databases networks" to retrieve curriculum content.
+STEP 2: Generate the required questions based on the retrieved content.
+STEP 3: Return the questions in the exact JSON format.
+
+Start by calling the curriculum_question_generator tool now."""
+
+            result = await agent_executor.ainvoke({
+                "input": detailed_instruction
+            })
+            
+            # Parse the result
+            return await self._parse_agent_questions_result(result['output'], exam_parameters)
+            
+        except Exception as e:
+            logger.error(f"❌ Error in curriculum agent: {e}")
+            # Fallback to direct generation
+            return await self._generate_questions_for_curriculum(curriculum_name, "comprehensive curriculum", exam_parameters)
+
+    async def _generate_questions_with_book_agent(self, book_title: str, curriculum_name: str, exam_parameters: Dict[str, Any]) -> List[Question]:
+        """Generate questions using agent that searches specific book in curriculum"""
+        try:
+            logger.info(f"📚 Creating book agent for '{book_title}' in curriculum '{curriculum_name}'")
+            
+            # Create book question generation tool
+            book_tool = self._create_book_question_tool(book_title, curriculum_name, exam_parameters)
+            tools = [book_tool]
+            
+            # Create agent with book-specific prompt
+            current_llm = self.get_current_llm()
+            agent = create_tool_calling_agent(current_llm, tools, self.book_question_prompt)
+            agent_executor = AgentExecutor(
+                agent=agent,
+                tools=tools,
+                verbose=True,
+                handle_parsing_errors=True,
+                max_iterations=3,
+                return_intermediate_steps=False
+            )
+            
+            # Execute agent to generate questions
+            logger.info("🚀 Executing book question generation agent")
+            logger.info(f"📋 Agent will use book_question_generator tool to search for content from '{book_title}'")
+            
+            # Create detailed instruction with all parameters
+            difficulty_str = ", ".join(exam_parameters['difficulty']) if isinstance(exam_parameters['difficulty'], list) else exam_parameters['difficulty']
+            types_str = ", ".join(exam_parameters['question_types']) if isinstance(exam_parameters['question_types'], list) else exam_parameters['question_types']
+            
+            detailed_instruction = f"""You must generate EXACTLY {exam_parameters['count']} exam questions from the book content.
+
+MANDATORY REQUIREMENTS:
+- Number of questions: EXACTLY {exam_parameters['count']} (no more, no less)
+- Difficulty level(s): {difficulty_str} (use ONLY these difficulty levels)
+- Question type(s): {types_str} (use ONLY these question types)
+- Time limit: {exam_parameters['time_limit']} minutes total
+- Focus on: {book_title} content within {curriculum_name} curriculum
+- DO NOT mention the book name '{book_title}' or any guide titles in questions
+- Keep all questions general and concept-focused
+
+STEP 1: Call the book_question_generator tool with topic "data lakehouse architecture configuration storage" to retrieve book content.
+STEP 2: Generate the required questions based on the retrieved content.
+STEP 3: Return the questions in the exact JSON format.
+
+Start by calling the book_question_generator tool now."""
+
+            result = await agent_executor.ainvoke({
+                "input": detailed_instruction
+            })
+            
+            # Parse the result
+            return await self._parse_agent_questions_result(result['output'], exam_parameters)
+            
+        except Exception as e:
+            logger.error(f"❌ Error in book agent: {e}")
+            # Fallback to direct generation
+            return await self._generate_questions_for_topic(book_title, "comprehensive book content", exam_parameters)
+
+    async def _generate_questions_with_topic_agent(self, book_title: str, curriculum_name: str, specific_topics: str, exam_parameters: Dict[str, Any]) -> List[Question]:
+        """Generate questions using agent that searches specific topics in book"""
+        try:
+            logger.info(f"🎯 Creating topic agent for topics '{specific_topics}' in book '{book_title}'")
+            
+            # Create topic question generation tool
+            topic_tool = self._create_topic_question_tool(book_title, curriculum_name, specific_topics, exam_parameters)
+            tools = [topic_tool]
+            
+            # Create agent with topic-specific prompt
+            current_llm = self.get_current_llm()
+            try:
+                agent = create_tool_calling_agent(current_llm, tools, self.topic_question_prompt)
+                agent_executor = AgentExecutor(
+                    agent=agent,
+                    tools=tools,
+                    verbose=True,
+                    handle_parsing_errors=True,
+                    max_iterations=3,
+                    return_intermediate_steps=False
+                )
+            except Exception as e:
+                logger.error(f"❌ Error creating topic agent: {e}")
+                raise
+            
+            # Execute agent to generate questions
+            logger.info("🚀 Executing topic question generation agent")
+            
+            # Create detailed instruction with all parameters
+            difficulty_str = ", ".join(exam_parameters['difficulty']) if isinstance(exam_parameters['difficulty'], list) else exam_parameters['difficulty']
+            types_str = ", ".join(exam_parameters['question_types']) if isinstance(exam_parameters['question_types'], list) else exam_parameters['question_types']
+            
+            detailed_instruction = f"""You must generate EXACTLY {exam_parameters['count']} exam questions on the specific topics.
+
+MANDATORY REQUIREMENTS:
+- Number of questions: EXACTLY {exam_parameters['count']} (no more, no less)  
+- Difficulty level(s): {difficulty_str} (use ONLY these difficulty levels)
+- Question type(s): {types_str} (use ONLY these question types)
+- Time limit: {exam_parameters['time_limit']} minutes total
+- Focus on topics: {specific_topics}
+- Context: From book '{book_title}' in {curriculum_name} curriculum
+- DO NOT mention the book name '{book_title}' or any guide titles in questions
+- Keep all questions general and concept-focused
+
+STEP 1: Call the topic_question_generator tool with topic "{specific_topics}" to retrieve relevant content.
+STEP 2: Generate the required questions based on the retrieved content.
+STEP 3: Return the questions in the exact JSON format.
+
+Start by calling the topic_question_generator tool now."""
+
+            result = await agent_executor.ainvoke({
+                "input": detailed_instruction
+            })
+            
+            # Parse the result
+            return await self._parse_agent_questions_result(result['output'], exam_parameters)
+            
+        except Exception as e:
+            logger.error(f"❌ Error in topic agent: {e}")
+            # Fallback to direct generation
+            exam_parameters['specific_topics'] = specific_topics
+            return await self._generate_questions_for_topic(book_title, specific_topics, exam_parameters)
+
+    async def _parse_agent_questions_result(self, agent_output: str, exam_parameters: Dict[str, Any]) -> List[Question]:
+        """Parse agent output and convert to Question objects"""
+        try:
+            logger.info(f"🔍 Parsing agent output: {agent_output[:500]}...")
+            logger.info(f"🔍 Full agent output length: {len(agent_output)} characters")
+            
+            # Log the complete output if it's short (likely empty or error)
+            if len(agent_output) < 100:
+                logger.warning(f"⚠️ Agent output is very short: '{agent_output}'")
+            
+            # Clean the output to extract JSON
+            cleaned_output = agent_output.strip()
+            if '```json' in cleaned_output:
+                start = cleaned_output.find('```json') + 7
+                end = cleaned_output.find('```', start)
+                if end != -1:
+                    cleaned_output = cleaned_output[start:end].strip()
+            elif '[' in cleaned_output and ']' in cleaned_output:
+                start = cleaned_output.find('[')
+                end = cleaned_output.rfind(']') + 1
+                cleaned_output = cleaned_output[start:end]
+            
+            # Parse JSON
+            questions_data = json.loads(cleaned_output)
+            if not isinstance(questions_data, list):
+                raise ValueError("Agent output is not a list of questions")
+            
+            # Convert to Question objects
+            questions = []
+            for q_data in questions_data:
+                # Ensure answer is string
+                answer_value = q_data.get('answer', '')
+                if isinstance(answer_value, bool):
+                    answer_str = str(answer_value)
+                else:
+                    answer_str = str(answer_value) if answer_value is not None else ''
+                
+                question = Question(
+                    difficulty=q_data.get('difficulty', 'medium'),
+                    type=q_data.get('type', 'multiple_choice_single_answer'),
+                    question_text=q_data.get('question_text', ''),
+                    options=q_data.get('options', []),
+                    answer=answer_str
+                )
+                questions.append(question)
+            
+            # Apply professional exam enhancements
+            enhanced_questions = await self._enhance_questions_professionally(questions, exam_parameters)
+            
+            logger.info(f"✅ Successfully parsed and enhanced {len(enhanced_questions)} questions from agent output")
+            return enhanced_questions
+            
+        except Exception as e:
+            logger.error(f"❌ Error parsing agent output: {e}")
+            logger.error(f"Raw output: {agent_output}")
+            return []
+
+    async def _enhance_questions_professionally(self, questions: List[Question], exam_parameters: Dict[str, Any]) -> List[Question]:
+        """Apply professional exam enhancements and quality assurance"""
+        try:
+            logger.info(f"🎓 Applying professional exam enhancements to {len(questions)} questions")
+            
+            enhanced_questions = []
+            
+            # Quality metrics
+            difficulty_distribution = {}
+            question_type_distribution = {}
+            time_per_question = exam_parameters.get('time_limit', 30) / len(questions) if questions else 0
+            
+            for i, question in enumerate(questions):
+                # Validate and enhance each question
+                enhanced_question = await self._validate_and_enhance_question(question, i + 1, time_per_question)
+                
+                if enhanced_question:
+                    enhanced_questions.append(enhanced_question)
+                    
+                    # Track distributions for quality analysis
+                    difficulty = enhanced_question.difficulty
+                    question_type = enhanced_question.type
+                    
+                    difficulty_distribution[difficulty] = difficulty_distribution.get(difficulty, 0) + 1
+                    question_type_distribution[question_type] = question_type_distribution.get(question_type, 0) + 1
+            
+            # Log quality metrics
+            logger.info(f"📊 EXAM QUALITY METRICS:")
+            logger.info(f"   Questions Generated: {len(enhanced_questions)}")
+            logger.info(f"   Time per Question: {time_per_question:.1f} minutes")
+            logger.info(f"   Difficulty Distribution: {difficulty_distribution}")
+            logger.info(f"   Question Type Distribution: {question_type_distribution}")
+            
+            # Apply professional quality checks
+            enhanced_questions = await self._apply_quality_checks(enhanced_questions, exam_parameters)
+            
+            return enhanced_questions
+            
+        except Exception as e:
+            logger.error(f"❌ Error in professional enhancement: {e}")
+            return questions  # Return original questions if enhancement fails
+
+    async def _validate_and_enhance_question(self, question: Question, question_number: int, time_per_question: float) -> Optional[Question]:
+        """Validate and enhance individual question quality"""
+        try:
+            # Basic validation
+            if not question.question_text or not question.question_text.strip():
+                logger.warning(f"⚠️ Question {question_number}: Empty question text")
+                return None
+            
+            # Enhance question text clarity and remove book references
+            enhanced_text = question.question_text.strip()
+            
+            # Remove book name references and guide titles
+            enhanced_text = self._remove_book_references(enhanced_text)
+            
+            if not enhanced_text.endswith('?') and question.type != 'true_false':
+                if question.type == 'multiple_choice_single_answer':
+                    enhanced_text += "?"
+                elif question.type == 'open_ended_question':
+                    enhanced_text += "?"
+            
+            # Validate multiple choice options
+            if question.type == 'multiple_choice_single_answer':
+                if not question.options or len(question.options) < 4:
+                    logger.warning(f"⚠️ Question {question_number}: Insufficient options for multiple choice")
+                    return None
+                
+                # Ensure answer matches one of the options
+                if question.answer not in question.options:
+                    logger.warning(f"⚠️ Question {question_number}: Answer not found in options")
+                    return None
+            
+            # Validate true/false questions
+            if question.type == 'true_false':
+                if question.answer.lower() not in ['true', 'false']:
+                    logger.warning(f"⚠️ Question {question_number}: Invalid true/false answer")
+                    return None
+                
+                # Ensure proper true/false formatting
+                question.answer = question.answer.capitalize()
+                question.options = []  # True/false should have no options
+            
+            # Optimize for time constraints
+            if time_per_question < 1:  # Very fast exam
+                if question.type == 'open_ended_question':
+                    # Convert to multiple choice for speed
+                    logger.info(f"🚀 Converting open-ended question {question_number} to multiple choice for time optimization")
+                    question.type = 'multiple_choice_single_answer'
+                    if not question.options:
+                        question.options = [question.answer, "Alternative A", "Alternative B", "Alternative C"]
+            
+            # Create enhanced question
+            enhanced_question = Question(
+                difficulty=question.difficulty,
+                type=question.type,
+                question_text=enhanced_text,
+                options=question.options,
+                answer=question.answer
+            )
+            
+            return enhanced_question
+            
+        except Exception as e:
+            logger.error(f"❌ Error validating question {question_number}: {e}")
+            return question
+
+    async def _apply_quality_checks(self, questions: List[Question], exam_parameters: Dict[str, Any]) -> List[Question]:
+        """Apply final quality checks and optimizations"""
+        try:
+            logger.info("🔍 Applying final quality checks")
+            
+            # Check difficulty distribution
+            requested_difficulties = exam_parameters.get('difficulty', ['medium'])
+            difficulty_counts = {}
+            
+            for question in questions:
+                difficulty_counts[question.difficulty] = difficulty_counts.get(question.difficulty, 0) + 1
+            
+            # Ensure we have questions of requested difficulties
+            missing_difficulties = [d for d in requested_difficulties if difficulty_counts.get(d, 0) == 0]
+            if missing_difficulties:
+                logger.warning(f"⚠️ Missing requested difficulties: {missing_difficulties}")
+            
+            # Check question type distribution
+            requested_types = exam_parameters.get('question_types', ['multiple_choice_single_answer'])
+            type_counts = {}
+            
+            for question in questions:
+                type_counts[question.type] = type_counts.get(question.type, 0) + 1
+            
+            # Ensure we have questions of requested types
+            missing_types = [t for t in requested_types if type_counts.get(t, 0) == 0]
+            if missing_types:
+                logger.warning(f"⚠️ Missing requested question types: {missing_types}")
+            
+            # Professional exam scoring
+            total_time = exam_parameters.get('time_limit', 30)
+            total_questions = len(questions)
+            
+            logger.info(f"✅ PROFESSIONAL EXAM ANALYSIS:")
+            logger.info(f"   📝 Total Questions: {total_questions}")
+            logger.info(f"   ⏱️ Total Time: {total_time} minutes")
+            logger.info(f"   🎯 Average Time per Question: {total_time/total_questions:.1f} minutes")
+            logger.info(f"   📊 Difficulty Spread: {difficulty_counts}")
+            logger.info(f"   🔧 Question Types: {type_counts}")
+            
+            # Professional recommendations
+            if total_time / total_questions < 0.5:
+                logger.info("💡 RECOMMENDATION: Very fast-paced exam - consider reducing complexity")
+            elif total_time / total_questions > 5:
+                logger.info("💡 RECOMMENDATION: Generous time allocation - suitable for in-depth analysis")
+            
+            return questions
+            
+        except Exception as e:
+            logger.error(f"❌ Error in quality checks: {e}")
+            return questions
+
+    async def _generate_exam_analytics(self, questions: List[Question], exam_parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate comprehensive exam analytics for professional reporting"""
+        try:
+            logger.info("📊 Generating comprehensive exam analytics")
+            
+            # Basic metrics
+            total_questions = len(questions)
+            total_time = exam_parameters.get('time_limit', 30)
+            
+            # Difficulty analysis
+            difficulty_breakdown = {}
+            for question in questions:
+                difficulty_breakdown[question.difficulty] = difficulty_breakdown.get(question.difficulty, 0) + 1
+            
+            # Question type analysis
+            type_breakdown = {}
+            for question in questions:
+                type_breakdown[question.type] = type_breakdown.get(question.type, 0) + 1
+            
+            # Time optimization analysis
+            avg_time_per_question = total_time / total_questions if total_questions > 0 else 0
+            
+            # Professional scoring metrics
+            complexity_score = self._calculate_complexity_score(questions)
+            balance_score = self._calculate_balance_score(difficulty_breakdown, type_breakdown)
+            
+            # Create comprehensive analytics
+            analytics = {
+                "exam_overview": {
+                    "total_questions": total_questions,
+                    "total_time_minutes": total_time,
+                    "average_time_per_question": round(avg_time_per_question, 2),
+                    "complexity_score": complexity_score,
+                    "balance_score": balance_score
+                },
+                "difficulty_analysis": {
+                    "breakdown": difficulty_breakdown,
+                    "percentages": {
+                        level: round((count / total_questions) * 100, 1) 
+                        for level, count in difficulty_breakdown.items()
+                    } if total_questions > 0 else {}
+                },
+                "question_type_analysis": {
+                    "breakdown": type_breakdown,
+                    "percentages": {
+                        q_type: round((count / total_questions) * 100, 1) 
+                        for q_type, count in type_breakdown.items()
+                    } if total_questions > 0 else {}
+                },
+                "professional_recommendations": self._generate_professional_recommendations(
+                    questions, exam_parameters, complexity_score, balance_score
+                ),
+                "quality_indicators": {
+                    "has_varied_difficulty": len(difficulty_breakdown) > 1,
+                    "has_varied_types": len(type_breakdown) > 1,
+                    "appropriate_time_allocation": 0.5 <= avg_time_per_question <= 5,
+                    "sufficient_questions": total_questions >= 5,
+                    "professional_standard": complexity_score >= 7 and balance_score >= 8
+                }
+            }
+            
+            logger.info(f"✅ Generated comprehensive analytics with {len(analytics)} key metrics")
+            return analytics
+            
+        except Exception as e:
+            logger.error(f"❌ Error generating exam analytics: {e}")
+            return {"error": str(e)}
+
+    def _calculate_complexity_score(self, questions: List[Question]) -> float:
+        """Calculate exam complexity score (1-10 scale)"""
+        try:
+            if not questions:
+                return 0.0
+            
+            # Base score
+            score = 5.0
+            
+            # Difficulty distribution bonus
+            difficulty_counts = {}
+            for question in questions:
+                difficulty_counts[question.difficulty] = difficulty_counts.get(question.difficulty, 0) + 1
+            
+            # Bonus for varied difficulty
+            if len(difficulty_counts) > 1:
+                score += 1.0
+            
+            # Bonus for hard questions
+            hard_percentage = difficulty_counts.get('hard', 0) / len(questions)
+            score += hard_percentage * 2
+            
+            # Question type complexity bonus
+            type_counts = {}
+            for question in questions:
+                type_counts[question.type] = type_counts.get(question.type, 0) + 1
+            
+            # Open-ended questions increase complexity
+            open_ended_percentage = type_counts.get('open_ended_question', 0) / len(questions)
+            score += open_ended_percentage * 1.5
+            
+            # Variety bonus
+            if len(type_counts) > 2:
+                score += 0.5
+            
+            return min(10.0, max(1.0, round(score, 1)))
+            
+        except Exception as e:
+            logger.error(f"❌ Error calculating complexity score: {e}")
+            return 5.0
+
+    def _calculate_balance_score(self, difficulty_breakdown: Dict[str, int], type_breakdown: Dict[str, int]) -> float:
+        """Calculate exam balance score (1-10 scale)"""
+        try:
+            score = 5.0
+            total_questions = sum(difficulty_breakdown.values())
+            
+            if total_questions == 0:
+                return 0.0
+            
+            # Difficulty balance analysis
+            diff_percentages = {level: count/total_questions for level, count in difficulty_breakdown.items()}
+            
+            # Ideal distribution: some easy (20-40%), medium (40-60%), hard (10-30%)
+            ideal_ranges = {
+                'easy': (0.2, 0.4),
+                'medium': (0.4, 0.6),
+                'hard': (0.1, 0.3)
+            }
+            
+            # Check balance
+            balance_points = 0
+            for level, (min_pct, max_pct) in ideal_ranges.items():
+                actual_pct = diff_percentages.get(level, 0)
+                if min_pct <= actual_pct <= max_pct:
+                    balance_points += 2
+                elif actual_pct > 0:  # Has some questions of this type
+                    balance_points += 1
+            
+            score += balance_points
+            
+            # Type variety bonus
+            if len(type_breakdown) >= 2:
+                score += 1
+            if len(type_breakdown) >= 3:
+                score += 0.5
+            
+            return min(10.0, max(1.0, round(score, 1)))
+            
+        except Exception as e:
+            logger.error(f"❌ Error calculating balance score: {e}")
+            return 5.0
+
+    def _generate_professional_recommendations(self, questions: List[Question], exam_parameters: Dict[str, Any], 
+                                             complexity_score: float, balance_score: float) -> List[str]:
+        """Generate professional recommendations for exam improvement"""
+        recommendations = []
+        
+        try:
+            total_time = exam_parameters.get('time_limit', 30)
+            avg_time = total_time / len(questions) if questions else 0
+            
+            # Time recommendations
+            if avg_time < 0.5:
+                recommendations.append("⚡ Consider increasing time limit - questions may feel rushed")
+            elif avg_time > 5:
+                recommendations.append("🕐 Time allocation is generous - suitable for complex analysis")
+            
+            # Complexity recommendations
+            if complexity_score < 5:
+                recommendations.append("📈 Consider adding more challenging questions to increase engagement")
+            elif complexity_score > 8:
+                recommendations.append("⚖️ High complexity exam - ensure students are well-prepared")
+            
+            # Balance recommendations
+            if balance_score < 6:
+                recommendations.append("🎯 Improve question balance - vary difficulty levels and types")
+            elif balance_score > 8:
+                recommendations.append("✨ Excellent question balance across difficulties and types")
+            
+            # Difficulty distribution analysis
+            difficulty_counts = {}
+            for question in questions:
+                difficulty_counts[question.difficulty] = difficulty_counts.get(question.difficulty, 0) + 1
+            
+            total = len(questions)
+            easy_pct = (difficulty_counts.get('easy', 0) / total) * 100
+            hard_pct = (difficulty_counts.get('hard', 0) / total) * 100
+            
+            if easy_pct > 60:
+                recommendations.append("🎓 Many easy questions - suitable for introductory assessment")
+            if hard_pct > 40:
+                recommendations.append("🔥 High proportion of difficult questions - advanced level exam")
+            
+            # Question type recommendations
+            type_counts = {}
+            for question in questions:
+                type_counts[question.type] = type_counts.get(question.type, 0) + 1
+            
+            if len(type_counts) == 1:
+                recommendations.append("🔄 Consider adding variety with different question types")
+            
+            # Professional quality indicators
+            if complexity_score >= 7 and balance_score >= 8:
+                recommendations.append("🏆 Professional-grade exam meeting educational standards")
+            
+            return recommendations
+            
+        except Exception as e:
+            logger.error(f"❌ Error generating recommendations: {e}")
+            return ["Error generating recommendations"]
+
+    def _create_professional_summary(self, questions: List[Question], exam_parameters: Dict[str, Any], 
+                                   analytics: Dict[str, Any]) -> Dict[str, Any]:
+        """Create professional exam summary for educators"""
+        try:
+            return {
+                "executive_summary": {
+                    "exam_title": f"Professional {exam_parameters.get('scope_type', 'Curriculum')} Assessment",
+                    "total_questions": len(questions),
+                    "estimated_duration": f"{exam_parameters.get('time_limit', 30)} minutes",
+                    "target_audience": "Students and professionals",
+                    "assessment_level": self._determine_assessment_level(analytics.get('exam_overview', {}).get('complexity_score', 5))
+                },
+                "quality_metrics": {
+                    "complexity_rating": analytics.get('exam_overview', {}).get('complexity_score', 5),
+                    "balance_rating": analytics.get('exam_overview', {}).get('balance_score', 5),
+                    "professional_standard_met": analytics.get('quality_indicators', {}).get('professional_standard', False)
+                },
+                "instructor_notes": {
+                    "preparation_time": "Review curriculum materials thoroughly",
+                    "recommended_resources": "Access to course materials and references",
+                    "grading_guidelines": "Consider partial credit for complex questions",
+                    "accommodation_suggestions": "Additional time for accessibility needs"
+                },
+                "performance_expectations": {
+                    "passing_threshold": "70% for basic competency",
+                    "excellence_threshold": "85% for advanced proficiency",
+                    "time_management": f"Average {analytics.get('exam_overview', {}).get('average_time_per_question', 0):.1f} minutes per question"
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error creating professional summary: {e}")
+            return {"error": "Could not generate professional summary"}
+
+    def _determine_assessment_level(self, complexity_score: float) -> str:
+        """Determine assessment level based on complexity"""
+        if complexity_score >= 8:
+            return "Advanced/Professional"
+        elif complexity_score >= 6:
+            return "Intermediate"
+        elif complexity_score >= 4:
+            return "Basic/Introductory"
+        else:
+            return "Foundational"
+
+    def _remove_book_references(self, question_text: str) -> str:
+        """Remove book name references and guide titles from question text"""
+        try:
+            import re
+            
+            # Common patterns to remove
+            patterns_to_remove = [
+                # Book/guide references
+                r'(?:according to|as described in|referencing|detailed in|from|in)\s+(?:the\s+)?[A-Z_][A-Z0-9_]*(?:\s+[A-Z_][A-Z0-9_]*)*(?:\s+GUIDE?|HANDBOOK|MANUAL|BOOK)?[,\s]*',
+                r'(?:according to|as described in|referencing|detailed in|from|in)\s+(?:the\s+)?\"[^\"]+\"[,\s]*',
+                r'(?:according to|as described in|referencing|detailed in|from|in)\s+(?:the\s+)?\'[^\']+\'[,\s]*',
+                
+                # Specific guide patterns
+                r'[,\s]*referencing considerations detailed in[^,.?]*[,\s]*',
+                r'[,\s]*as outlined in[^,.?]*[,\s]*',
+                r'[,\s]*mentioned in[^,.?]*[,\s]*',
+                r'[,\s]*described in[^,.?]*[,\s]*',
+                
+                # Clean up extra spaces and punctuation
+                r'\s+', # Multiple spaces
+                r'^[,\s]+|[,\s]+$', # Leading/trailing commas and spaces
+                r'[,\s]*\?+$', # Multiple question marks
+            ]
+            
+            cleaned_text = question_text
+            
+            # Apply all patterns
+            for pattern in patterns_to_remove[:-3]:  # Don't apply cleanup patterns yet
+                cleaned_text = re.sub(pattern, '', cleaned_text, flags=re.IGNORECASE)
+            
+            # Apply cleanup patterns
+            cleaned_text = re.sub(r'\s+', ' ', cleaned_text)  # Multiple spaces to single
+            cleaned_text = re.sub(r'^[,\s]+|[,\s]+$', '', cleaned_text)  # Leading/trailing
+            cleaned_text = re.sub(r'\?+$', '?', cleaned_text)  # Multiple question marks
+            
+            # Ensure proper capitalization
+            if cleaned_text and not cleaned_text[0].isupper():
+                cleaned_text = cleaned_text[0].upper() + cleaned_text[1:]
+            
+            # Log if changes were made
+            if cleaned_text != question_text:
+                logger.info(f"📝 Cleaned question text: '{question_text[:50]}...' → '{cleaned_text[:50]}...'")
+            
+            return cleaned_text.strip()
+            
+        except Exception as e:
+            logger.error(f"❌ Error cleaning question text: {e}")
+            return question_text
+
+    async def _generate_questions_for_curriculum(self, curriculum_name: str, topic: str, parameters: Dict[str, Any]) -> List[Question]:
+        """Generate questions for an entire curriculum"""
+        try:
+            # Search for content across the entire curriculum
+            logger.info(f"Searching curriculum '{curriculum_name}' for question generation with topic: {topic}")
+            
+            # Use broader search queries to get diverse content from curriculum
+            search_queries = [
+                "introduction overview concepts",
+                "advanced topics techniques methods",
+                "practical applications examples",
+                "key principles fundamentals",
+                topic  # Include the specific topic as well
+            ]
+            
+            all_content = []
+            for query in search_queries:
+                results = await self._search_curriculum_embeddings(curriculum_name, query, k=4)
+                if results:
+                    all_content.extend([r['content'] for r in results])
+            
+            # Remove duplicates and combine content
+            unique_content = list(set(all_content))
+            content = "\n\n".join(unique_content[:15])  # Limit to prevent context overflow
+            
+            if not content:
+                logger.warning(f"No content found for curriculum '{curriculum_name}'")
+                return []
+            
+            # Extract parameters for comprehensive exam generation
+            count = parameters.get('count', 2)
+            difficulty_levels = parameters.get('difficulty', ['medium'])
+            question_types = parameters.get('question_types', ['multiple_choice_single_answer'])
+            user_message = parameters.get('user_message', '')
+            
+            # Create dynamic difficulty and type constraints
+            difficulty_constraint = f"Focus on {', '.join(difficulty_levels)} difficulty levels"
+            type_constraint = f"Generate only these question types: {', '.join(question_types)}"
+            
+            # Enhanced question generation prompt for curriculum-wide exams
+            question_prompt = ChatPromptTemplate.from_messages([
+                ("system", f"""You are a professional exam author and educational assessment specialist. Generate high-quality technical exam questions based STRICTLY on the provided content from the {curriculum_name} curriculum.
+
+CURRICULUM EXAM SPECIFICATIONS:
+- {difficulty_constraint}
+- {type_constraint}
+- Generate exactly {count} questions
+- Cover diverse topics from across the curriculum
+- User Request: "{user_message}"
+
+DISTRIBUTION GUIDELINES:
+- Distribute questions evenly across different subject areas in the curriculum
+- Ensure questions cover various books/materials in the curriculum
+- If multiple question types specified, vary the types throughout
+- Make questions comprehensive and representative of the entire curriculum
+
+CRITICAL CONTENT FOCUS REQUIREMENTS:
+- ONLY create questions about TECHNICAL CONTENT, concepts, theories, procedures, and subject matter
+- Write questions as if they are from a professional certification exam covering the entire curriculum
+- Questions must be direct, clear, and professional without any meta-references
+
+STRICTLY FORBIDDEN QUESTION ELEMENTS:
+- DO NOT mention chapters, sections, or book structure ("Chapter 2", "Section 1.3", etc.)
+- DO NOT use phrases like "According to the text", "Based on the provided text", "The book states", "As described in the book"
+- DO NOT ask about book organization, preface, introduction, or meta-information
+- DO NOT ask "What does the book teach" or "What does the book aim to"
+- DO NOT reference the source material in questions
+
+REQUIRED QUESTION STYLE:
+- Write questions in direct, technical language
+- Ask about concepts, processes, tools, and techniques directly
+- Use professional terminology appropriate for the field
+- Questions should sound like they come from industry certification exams covering multiple subject areas
+
+Your response MUST be a JSON array of question objects. Each question object must have:
+- "difficulty": one of "easy", "medium", or "hard" (matching the specified levels)
+- "type": one of "multiple_choice_single_answer", "true_false", or "open_ended_question" (matching specified types)
+- "question_text": The full text of the question (clear, specific, and exam-appropriate)
+- "options": Array of 4 choices for multiple choice, empty array for others
+- "answer": The correct answer as a STRING (for true/false use "True" or "False", for multiple choice use the exact option text)
+
+CURRICULUM EXAM QUALITY STANDARDS:
+- Easy questions: Test basic recall of technical definitions and concepts from across the curriculum
+- Medium questions: Test application of concepts and analysis of scenarios from multiple subject areas
+- Hard questions: Test evaluation, synthesis, and critical thinking across curriculum domains
+- Multiple choice: Provide 4 plausible technical options with clear distinctions, only one correct answer
+- True/False: Create statements about technical facts that are unambiguously true or false
+- Open-ended: Ask for explanations that demonstrate understanding across curriculum topics
+
+CRITICAL REQUIREMENTS:
+- The "answer" field must ALWAYS be a string
+- Base questions on technical concepts from the curriculum content
+- Make questions appropriate for comprehensive curriculum assessment
+- Ensure clear, unambiguous wording
+- Questions must test actual technical understanding across multiple subject areas
+- NO meta-references to source material whatsoever"""),
+                ("human", "Curriculum Content: {content}\nTopic: {topic}\nGenerate {count} professional technical exam questions covering the breadth of the curriculum. Write each question as if it appears on a comprehensive certification exam covering multiple subject areas.")
+            ])
+            
+            chain = question_prompt | self.get_current_llm() | StrOutputParser()
+            
+            logger.info(f"Invoking AI chain for curriculum: {curriculum_name} using {'Ollama' if self.use_fallback else 'Google Gemini'}")
+            
+            try:
+                result = await chain.ainvoke({
+                    "content": content,
+                    "topic": topic,
+                    "count": count,
+                    "difficulty_constraint": difficulty_constraint,
+                    "type_constraint": type_constraint
+                })
+            except Exception as e:
+                error_str = str(e).lower()
+                # Check if this is a quota exceeded error
+                if "quota" in error_str or "429" in error_str or "rate limit" in error_str:
+                    logger.warning(f"Google Gemini quota exceeded: {e}")
+                    if not self.use_fallback:
+                        self.switch_to_fallback()
+                        # Retry with fallback LLM
+                        chain = question_prompt | self.get_current_llm() | StrOutputParser()
+                        logger.info(f"Retrying with Ollama fallback for curriculum: {curriculum_name}")
+                        result = await chain.ainvoke({
+                            "content": content,
+                            "topic": topic,
+                            "count": count,
+                            "difficulty_constraint": difficulty_constraint,
+                            "type_constraint": type_constraint
+                        })
+                    else:
+                        raise e
+                else:
+                    raise e
+            
+            logger.info(f"Raw AI response for curriculum {curriculum_name}: {result[:500]}...")
+            
+            # Parse questions
+            try:
+                # Clean the response
+                cleaned_result = result.strip()
+                if cleaned_result.startswith('```json'):
+                    cleaned_result = cleaned_result.replace('```json\n', '').replace('\n```', '')
+                elif cleaned_result.startswith('```'):
+                    cleaned_result = cleaned_result.replace('```\n', '').replace('\n```', '')
+                
+                logger.info(f"Cleaned response for parsing: {cleaned_result[:300]}...")
+                questions_data = json.loads(cleaned_result)
+                logger.info(f"Successfully parsed {len(questions_data)} questions for curriculum: {curriculum_name}")
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON parsing error for curriculum {curriculum_name}: {e}")
+                logger.error(f"Raw response: {result}")
+                return []
+            except Exception as e:
+                logger.error(f"Unexpected error parsing response for curriculum {curriculum_name}: {e}")
+                return []
+            
+            questions = []
+            for q_data in questions_data:
+                # Convert answer to string to handle boolean values from LLM
+                answer_value = q_data.get('answer', '')
+                if isinstance(answer_value, bool):
+                    answer_str = str(answer_value)
+                else:
+                    answer_str = str(answer_value) if answer_value is not None else ''
+                
+                question = Question(
+                    difficulty=q_data.get('difficulty', 'medium'),
+                    type=q_data.get('type', 'multiple_choice_single_answer'),
+                    question_text=q_data.get('question_text', ''),
+                    options=q_data.get('options', []),
+                    answer=answer_str
+                )
+                questions.append(question)
+            
+            return questions
+            
+        except Exception as e:
+            logger.error(f"Error generating questions for curriculum {curriculum_name}: {e}")
+            return []
+
     async def _generate_questions_for_topic(self, book_title: str, topic: str, parameters: Dict[str, Any]) -> List[Question]:
         """Generate questions for a specific topic"""
         try:
-            # Set the current book title for context in search
-            self._current_book_title = book_title
+            logger.info(f"🔄 Using fallback method for book '{book_title}' topic '{topic}'")
             
-            # Use the full book title as table name (no sanitization)
-            table_name = book_title
-            
-            # Search for content related to the topic
-            results = await self._search_vector_table(table_name, topic, k=8)
-            content = "\n\n".join(results)
+            # Use curriculum embedding search instead of individual book tables
+            try:
+                # Use IT curriculum as default since most content is in IT curriculum
+                curriculum_name = "IT"
+                
+                if book_title and book_title != "General Content":
+                    # Use book-specific search
+                    search_results = await self._search_book_embeddings(curriculum_name, book_title, topic, k=8)
+                    content_chunks = [r['content'] for r in search_results] if search_results else []
+                else:
+                    # Use general curriculum search
+                    search_results = await self._search_curriculum_embeddings(curriculum_name, topic, k=8)
+                    content_chunks = [r['content'] for r in search_results] if search_results else []
+                    
+                content = "\n\n".join(content_chunks) if content_chunks else f"General content about {topic}"
+                logger.info(f"✅ Fallback method retrieved {len(content_chunks)} content chunks")
+            except Exception as e:
+                logger.error(f"❌ Error in fallback search: {e}")
+                content = f"General content about {topic}"
             
             # Extract parameters for comprehensive exam generation
             count = parameters.get('count', 2)
@@ -1308,6 +2650,136 @@ Scope: {scope}
             logger.error(f"Error getting/creating session: {e}")
             raise
 
+    async def _get_or_create_curriculum_session(self, session_id: str, curriculum: str) -> Dict[str, Any]:
+        """Get existing session or create new one for curriculum"""
+        try:
+            # Only try to get existing session if session_id is provided and not empty
+            session = None
+            if session_id and session_id.strip() and session_id != "null":
+                logger.info(f"Attempting to find existing session: {session_id}")
+                session = await self.db.get_chat_session(session_id)
+                
+                if session:
+                    logger.info(f"Found existing session: {session['id']} for curriculum: {session.get('curriculum_name', 'Unknown')}")
+                    return session
+                else:
+                    logger.warning(f"Session {session_id} not found in database, will create new session")
+            else:
+                logger.info(f"No valid session_id provided (got: '{session_id}'), creating new session")
+            
+            # Create new session for curriculum - for now use the first book in the curriculum
+            logger.info(f"Creating new session for curriculum: {curriculum}")
+            
+            # Get curriculum info
+            curriculum_info = await self.db.get_curriculum_by_name(curriculum)
+            if not curriculum_info:
+                raise ValueError(f"Curriculum '{curriculum}' not found")
+            
+            # Get a book from this curriculum (for now, get the first one)
+            books_in_curriculum = await self.db.get_books_by_curriculum(curriculum_info['id'])
+            if not books_in_curriculum:
+                raise ValueError(f"No books found in curriculum '{curriculum}'")
+            
+            first_book = books_in_curriculum[0]
+            
+            # Create new session using the first book
+            new_session_id = await self.db.create_chat_session(
+                user_id="550e8400-e29b-41d4-a716-446655440000",  # Default UUID for demo
+                book_id=first_book['id'],
+                session_name=f"Chat about {curriculum}"
+            )
+            
+            # Get the newly created session
+            session = await self.db.get_chat_session(new_session_id)
+            if not session:
+                raise RuntimeError(f"Failed to retrieve newly created session {new_session_id}")
+                
+            logger.info(f"Created new session: {session['id']} for curriculum: {curriculum}")
+            return session
+            
+        except Exception as e:
+            logger.error(f"Error getting/creating curriculum session: {e}")
+            raise
+
+    async def _handle_curriculum_question_answering(self, request: ChatRequest, session: Dict[str, Any]) -> str:
+        """Handle question answering for curriculum-based chat"""
+        try:
+            # Get or create chat history for the session (like in the regular method)
+            session_id = str(session['id'])
+            if session_id not in self.chat_histories:
+                self.chat_histories[session_id] = ConversationBufferMemory(
+                    memory_key="chat_history", 
+                    return_messages=True
+                )
+            memory = self.chat_histories[session_id]
+            
+            # Load existing messages from database into memory if memory is empty
+            if len(memory.chat_memory.messages) == 0:
+                await self.memory_manager.load_chat_history_to_memory(session_id, memory, limit=50)
+            
+            # DIRECT VECTOR SEARCH APPROACH - Let's directly search the curriculum first
+            logger.info(f"🔍 DIRECT SEARCH: Starting curriculum search for '{request.curriculum}' with query: {request.user_message[:50]}...")
+            
+            # Search curriculum embeddings directly
+            search_results = await self._search_curriculum_embeddings(request.curriculum, request.user_message, k=6)
+            
+            if search_results:
+                combined_content = "\n\n".join([r['content'] for r in search_results])
+                logger.info(f"✅ DIRECT SEARCH SUCCESS: Found {len(search_results)} chunks from curriculum '{request.curriculum}'")
+                
+                # Now use this content with a simple LLM call
+                simple_prompt = ChatPromptTemplate.from_messages([
+                    ("system", f"""You are an expert educational assistant. You have been provided with relevant content from the {request.curriculum} curriculum to answer the user's question.
+
+Use the provided curriculum content to give a comprehensive, well-structured answer.
+
+**RESPONSE STRUCTURE:**
+🎯 **DIRECT ANSWER**
+Start with a clear, direct answer to the user's question.
+
+📚 **DETAILED EXPLANATION**
+Provide thorough explanation using the curriculum content.
+
+🔑 **KEY CONCEPTS**
+Highlight important concepts and terms.
+
+💡 **PRACTICAL EXAMPLES**
+Include relevant examples from the content.
+
+Always end with: (Source: Internal Knowledge Base)
+
+**CURRICULUM CONTENT:**
+{combined_content}"""),
+                    MessagesPlaceholder(variable_name="chat_history"),
+                    ("human", "{user_message}")
+                ])
+                
+                # Get chat history for context
+                chat_history = memory.chat_memory.messages if memory.chat_memory.messages else []
+                
+                chain = simple_prompt | self.llm | StrOutputParser()
+                response = await chain.ainvoke({
+                    "user_message": request.user_message,
+                    "chat_history": chat_history
+                })
+                
+                # Save context to memory
+                memory.save_context(
+                    inputs={"input": request.user_message},
+                    outputs={"output": response}
+                )
+                
+                logger.info(f"✅ CURRICULUM RESPONSE GENERATED: Using {len(search_results)} chunks from vector database")
+                return response
+                
+            else:
+                logger.warning(f"❌ NO CONTENT FOUND: No curriculum content found for query: {request.user_message[:50]}...")
+                return f"I couldn't find specific information about your question in the {request.curriculum} curriculum. This might be because the content hasn't been properly indexed or your question is outside the curriculum scope. Please try rephrasing your question or ask about topics covered in the {request.curriculum} curriculum."
+            
+        except Exception as e:
+            logger.error(f"Error handling curriculum question answering: {e}")
+            return f"I apologize, but I encountered an error while processing your question about {request.curriculum}. Please try again."
+
     # Session management methods
     async def create_session(self, user_id: str, book_title: str, session_name: str = None) -> ChatSessionModel:
         """Create new chat session"""
@@ -1330,7 +2802,7 @@ Scope: {scope}
             # Create response manually with string conversion
             return ChatSessionModel(
                 id=str(session_data['id']),
-                user_id=session_data['user_id'],
+                user_id=str(session_data['user_id']),
                 book_id=session_data['book_id'],
                 session_name=session_data['session_name'],
                 created_at=session_data['created_at'],
@@ -1339,6 +2811,74 @@ Scope: {scope}
             
         except Exception as e:
             logger.error(f"Error creating session: {e}")
+            raise
+
+    async def create_curriculum_session(self, user_id: str, curriculum_name: str, session_name: str = None) -> ChatSessionModel:
+        """Create new curriculum-based chat session"""
+        try:
+            # Ensure user exists (create if not)
+            await self._ensure_user_exists(user_id)
+            
+            # Get curriculum info
+            curriculum_info = await self.db.get_curriculum_by_name(curriculum_name)
+            if not curriculum_info:
+                raise ValueError(f"Curriculum '{curriculum_name}' not found")
+            
+            # Get books in this curriculum
+            books_in_curriculum = await self.db.get_books_by_curriculum(curriculum_info['id'])
+            if not books_in_curriculum:
+                raise ValueError(f"No books found in curriculum '{curriculum_name}'")
+            
+            # Use the first book for session creation (the system will search across all books in the curriculum)
+            first_book = books_in_curriculum[0]
+            
+            # Create session
+            session_id = await self.db.create_chat_session(
+                user_id=user_id,
+                book_id=first_book['id'],
+                session_name=session_name or f"Chat with {curriculum_name} Curriculum"
+            )
+            
+            # Get created session
+            session_data = await self.db.get_chat_session(session_id)
+            
+            # Create response manually with string conversion
+            return ChatSessionModel(
+                id=str(session_data['id']),
+                user_id=str(session_data['user_id']),
+                book_id=session_data['book_id'],
+                session_name=session_data['session_name'],
+                created_at=session_data['created_at'],
+                updated_at=session_data['updated_at']
+            )
+            
+        except Exception as e:
+            logger.error(f"Error creating curriculum session: {e}")
+            raise
+
+    async def _ensure_user_exists(self, user_id: str):
+        """Ensure user exists in database, create if not"""
+        try:
+            # Check if user exists
+            async with self.db.get_connection() as conn:
+                user_exists = await conn.fetchval(
+                    "SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)",
+                    user_id
+                )
+                
+                if not user_exists:
+                    # Create a demo user
+                    await conn.execute(
+                        "INSERT INTO users (id, full_name, email, password_hash) VALUES ($1, $2, $3, $4)",
+                        user_id,
+                        f"User {user_id[:8]}",
+                        f"user_{user_id[:8]}@zakerly.com",
+                        "demo_hash"
+                    )
+                    logger.info(f"Created demo user: {user_id}")
+                    
+        except Exception as e:
+            logger.error(f"Error ensuring user exists: {e}")
             raise
 
     async def get_session(self, session_id: str) -> Optional[ChatSessionModel]:

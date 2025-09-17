@@ -8,10 +8,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Send, BookOpen, Download, Copy, ExternalLink, Loader2, AlertCircle, ArrowLeft, Plus } from 'lucide-react';
+import { Send, BookOpen, Download, Copy, ExternalLink, Loader2, AlertCircle, ArrowLeft, Plus, GraduationCap } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { BooksService, ChatService, SessionService, Utils } from '@/lib/services';
-import type { Book as BookType, ChatMessage, ChatSession, ChatResponse, Category, QuestionGenerationRequest } from '@/lib/types';
+import { BooksService, ChatService, SessionService, Utils, CurriculumService } from '@/lib/services';
+import type { Book as BookType, ChatMessage, ChatSession, ChatResponse, Curriculum, QuestionGenerationRequest } from '@/lib/types';
 
 interface Message {
   id: string;
@@ -24,17 +24,16 @@ interface Message {
 export default function Chat() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const bookParam = searchParams.get('book');
+  const curriculumParam = searchParams.get('curriculum');
   
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [selectedCategory, setSelectedCategory] = useState<string>('');
+  const [curriculums, setCurriculums] = useState<Curriculum[]>([]);
+  const [selectedCurriculum, setSelectedCurriculum] = useState<string>('');
   const [books, setBooks] = useState<BookType[]>([]);
   const [allBooks, setAllBooks] = useState<BookType[]>([]);
-  const [selectedBook, setSelectedBook] = useState<string>('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [currentMessage, setCurrentMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isLoadingBooks, setIsLoadingBooks] = useState(true);
+  const [isLoadingData, setIsLoadingData] = useState(true);
   const [error, setError] = useState('');
   const [currentSession, setCurrentSession] = useState<ChatSession | null>(null);
   
@@ -42,7 +41,7 @@ export default function Chat() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const userId = Utils.generateUserId();
 
-  const selectedBookData = books.find(book => book.title === selectedBook);
+  const selectedCurriculumData = curriculums.find(curr => curr.id.toString() === selectedCurriculum);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -57,62 +56,55 @@ export default function Chat() {
     loadData();
   }, []);
 
-  // Set selected book from URL param
+  // Set selected curriculum from URL param
   useEffect(() => {
-    if (bookParam && allBooks.length > 0 && categories.length > 0) {
-      const decodedBook = decodeURIComponent(bookParam);
-      const book = allBooks.find(b => b.title === decodedBook);
-      if (book) {
-        // Set category first, then book
-        const category = categories.find(c => c.id === book.category_id);
-        if (category) {
-          setSelectedCategory(category.id.toString());
-          handleCategoryChange(category.id.toString());
-        }
-        setSelectedBook(book.title);
-        loadChatSession(book.title);
+    if (curriculumParam && allBooks.length > 0 && curriculums.length > 0) {
+      const decodedCurriculum = decodeURIComponent(curriculumParam);
+      const curriculum = curriculums.find(c => c.name === decodedCurriculum);
+      if (curriculum) {
+        setSelectedCurriculum(curriculum.id.toString());
+        handleCurriculumChange(curriculum.id.toString());
       }
     }
-  }, [bookParam, allBooks, categories]);
+  }, [curriculumParam, allBooks, curriculums]);
 
   const loadData = async () => {
     try {
-      setIsLoadingBooks(true);
-      const [booksData, categoriesData] = await Promise.all([
+      setIsLoadingData(true);
+      const [booksData, curriculumsData] = await Promise.all([
         BooksService.getBooks(),
-        BooksService.getCategories()
+        CurriculumService.getCurriculums()
       ]);
       setAllBooks(booksData);
       setBooks(booksData);
-      setCategories(categoriesData);
+      setCurriculums(curriculumsData);
     } catch (err) {
       console.error('Error loading data:', err);
-      setError('Failed to load books and categories');
+      setError('Failed to load books and curriculums');
     } finally {
-      setIsLoadingBooks(false);
+      setIsLoadingData(false);
     }
   };
 
-  const handleCategoryChange = (categoryId: string) => {
-    setSelectedCategory(categoryId);
-    setSelectedBook('');
+  const handleCurriculumChange = (curriculumId: string) => {
+    setSelectedCurriculum(curriculumId);
     setMessages([]);
     setCurrentSession(null);
     
-    if (categoryId === 'all') {
+    if (curriculumId === 'all') {
       setBooks(allBooks);
     } else {
-      const filteredBooks = allBooks.filter(book => book.category_id === parseInt(categoryId));
+      const filteredBooks = allBooks.filter(book => book.curriculum_id === parseInt(curriculumId));
       setBooks(filteredBooks);
     }
   };
 
-  const loadChatSession = async (bookTitle: string) => {
+  const loadChatSession = async (curriculumName: string) => {
     try {
-      // Try to get existing sessions for this user and book
+      // Try to get existing sessions for this user and curriculum
       const sessions = await SessionService.getUserSessions(userId);
       const existingSession = sessions.find(session => 
-        session.session_name?.includes(bookTitle) || session.book_id
+        session.session_name?.includes(curriculumName)
       );
 
       if (existingSession) {
@@ -133,26 +125,11 @@ export default function Chat() {
     }
   };
 
-  const handleBookChange = async (bookTitle: string) => {
-    setSelectedBook(bookTitle);
-    setMessages([]);
-    setCurrentSession(null);
-    setError('');
-    
-    // Update URL
-    const params = new URLSearchParams();
-    params.set('book', encodeURIComponent(bookTitle));
-    navigate(`/chat?${params.toString()}`, { replace: true });
-    
-    // Start with a fresh session (don't load existing)
-    // User can load existing session history if needed via a separate feature
-  };
-
   const handleSendMessage = async () => {
-    if (!currentMessage.trim() || !selectedBook || isLoading) return;
+    if (!currentMessage.trim() || !selectedCurriculum || isLoading) return;
 
-    const book = selectedBookData;
-    if (!book) return;
+    const curriculum = selectedCurriculumData;
+    if (!curriculum) return;
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -171,20 +148,21 @@ export default function Chat() {
       // Create session if needed
       let sessionId = currentSession?.id || '';
       if (!currentSession) {
-        // Fix: Create session using book title (as expected by backend)
+        // Create session for curriculum-based chat
         const newSession = await SessionService.createSession(
           userId,
-          book.title, // Use book title as expected by backend
-          `Chat with ${book.title}`
+          curriculum.name,
+          `Chat with ${curriculum.name} Curriculum`,
+          true // isCurriculum = true
         );
         setCurrentSession(newSession);
         sessionId = newSession.id;
       }
 
-      // Send chat request
+      // Send curriculum-based chat request (book_title required by current API)
       const chatRequest = {
-        category: Utils.getCategoryName(book.category_id),
-        book_title: book.title,
+        curriculum: curriculum.name,
+        book_title: books.length > 0 ? books[0].title : 'Curriculum Books',
         session_id: sessionId,
         user_message: messageToSend,
         intent: 'answer_question'
@@ -244,7 +222,7 @@ export default function Chat() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `chat-${selectedBookData?.title || 'conversation'}.txt`;
+    a.download = `chat-${selectedCurriculumData?.name || 'conversation'}.txt`;
     a.click();
   };
 
@@ -255,12 +233,13 @@ export default function Chat() {
       setMessages([]);
       setError('');
       
-      // If there's a selected book, create a new session immediately
-      if (selectedBook && selectedBookData) {
+      // If there's a selected curriculum, create a new session immediately
+      if (selectedCurriculum && selectedCurriculumData) {
         const newSession = await SessionService.createSession(
           userId,
-          selectedBookData.title,
-          `Chat with ${selectedBookData.title}`
+          selectedCurriculumData.name,
+          `Chat with ${selectedCurriculumData.name} Curriculum`,
+          true // isCurriculum = true
         );
         setCurrentSession(newSession);
       }
@@ -278,7 +257,7 @@ export default function Chat() {
     navigator.clipboard.writeText(chatContent);
   };
 
-  if (isLoadingBooks) {
+  if (isLoadingData) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-background via-background to-accent/5">
         <Header />
@@ -286,7 +265,7 @@ export default function Chat() {
           <div className="flex items-center justify-center h-64">
             <div className="text-center">
               <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-primary" />
-              <p className="text-muted-foreground">Loading your books...</p>
+              <p className="text-muted-foreground">Loading curriculums and books...</p>
             </div>
           </div>
         </div>
@@ -337,52 +316,32 @@ export default function Chat() {
             </Card>
           ) : (
             <>
-              {/* Category and Book Selection */}
+              {/* Curriculum Selection */}
               <Card className="mb-6">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
-                    <BookOpen className="w-5 h-5 text-primary" />
-                    Select a Book
+                    <GraduationCap className="w-5 h-5 text-primary" />
+                    Select a Curriculum
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {/* Category Selection */}
+                  {/* Curriculum Selection */}
                   <div>
-                    <label className="text-sm font-medium mb-2 block">Category</label>
-                    <Select value={selectedCategory} onValueChange={handleCategoryChange}>
+                    <label className="text-sm font-medium mb-2 block">Curriculum</label>
+                    <Select value={selectedCurriculum} onValueChange={handleCurriculumChange}>
                       <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Choose a category..." />
+                        <SelectValue placeholder="Choose a curriculum to chat with..." />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="all">All Categories</SelectItem>
-                        {categories.map((category) => (
-                          <SelectItem key={category.id} value={category.id.toString()}>
-                            {category.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Book Selection */}
-                  <div>
-                    <label className="text-sm font-medium mb-2 block">Book</label>
-                    <Select 
-                      value={selectedBook} 
-                      onValueChange={handleBookChange}
-                      disabled={!selectedCategory || books.length === 0}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Choose a book to chat with..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {books.map((book) => (
-                          <SelectItem key={book.id} value={book.title}>
+                        {curriculums.map((curriculum) => (
+                          <SelectItem key={curriculum.id} value={curriculum.id.toString()}>
                             <div className="flex flex-col">
-                              <span className="font-medium">{book.title}</span>
-                              <span className="text-sm text-muted-foreground">
-                                {book.author ? `by ${book.author}` : 'Author unknown'}
-                              </span>
+                              <span className="font-medium">{curriculum.name}</span>
+                              {curriculum.description && (
+                                <span className="text-sm text-muted-foreground">
+                                  {curriculum.description}
+                                </span>
+                              )}
                             </div>
                           </SelectItem>
                         ))}
@@ -390,23 +349,23 @@ export default function Chat() {
                     </Select>
                   </div>
                   
-                  {selectedBookData && (
+                  {selectedCurriculumData && (
                     <div className="mt-4 p-4 bg-primary/5 rounded-lg border border-primary/20">
                       <div className="flex items-center gap-3">
                         <div className="w-12 h-16 bg-gradient-to-br from-primary to-secondary rounded shadow-sm flex items-center justify-center">
-                          <BookOpen className="w-6 h-6 text-white" />
+                          <GraduationCap className="w-6 h-6 text-white" />
                         </div>
                         <div>
-                          <h3 className="font-semibold">{selectedBookData.title}</h3>
+                          <h3 className="font-semibold">{selectedCurriculumData.name}</h3>
                           <p className="text-sm text-muted-foreground">
-                            {selectedBookData.author ? `by ${selectedBookData.author}` : 'Author unknown'}
+                            {selectedCurriculumData.description || 'Curriculum description'}
                           </p>
-                          <div className="flex gap-2 mt-1">
+                          <div className="flex gap-2 mt-2">
                             <Badge variant="secondary">
-                              {Utils.getCategoryName(selectedBookData.category_id)}
+                              {books.length} {books.length === 1 ? 'Book' : 'Books'}
                             </Badge>
                             <Badge variant="outline" className="text-xs">
-                              <BookOpen className="w-3 h-3 mr-1" />
+                              <GraduationCap className="w-3 h-3 mr-1" />
                               AI Enhanced
                             </Badge>
                           </div>
@@ -426,7 +385,7 @@ export default function Chat() {
               )}
 
               {/* Chat Interface */}
-              {selectedBook && (
+              {selectedCurriculum && (
                 <Card className="flex-1 flex flex-col bg-white shadow-lg">
                   <CardHeader className="border-b shrink-0">
                     <div className="flex items-center justify-between">
@@ -476,7 +435,7 @@ export default function Chat() {
                                 </div>
                                 <h3 className="text-lg font-semibold">Start Your Conversation</h3>
                                 <p className="text-muted-foreground max-w-md">
-                                  Ask questions about "{selectedBookData?.title}", request explanations, or explore specific topics in detail.
+                                  Ask questions about the "{selectedCurriculumData?.name}" curriculum, request explanations, or explore specific topics from all books in this curriculum.
                                 </p>
                               </div>
                             </div>

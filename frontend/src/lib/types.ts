@@ -1,14 +1,23 @@
 // Core data types matching backend models
 
-export interface Category {
+export interface Curriculum {
   id: number;
   name: string;
+  description?: string;
+  created_by: string;
   created_at: string;
+  updated_at: string;
+}
+
+export interface CurriculumCreateRequest {
+  name: string;
+  description?: string;
+  created_by: string;
 }
 
 export interface Book {
   id: number;
-  category_id: number;
+  curriculum_id: number;
   title: string;
   author: string | null;
   publication_year: number | null;
@@ -17,8 +26,8 @@ export interface Book {
   created_at: string;
 }
 
-export interface BookWithCategory extends Book {
-  category_name?: string;
+export interface BookWithCurriculum extends Book {
+  curriculum_name?: string;
 }
 
 export interface ChatSession {
@@ -40,7 +49,7 @@ export interface ChatMessage {
 }
 
 export interface ChatRequest {
-  category: string;
+  curriculum: string;
   book_title: string;
   session_id: string;
   user_message: string;
@@ -55,16 +64,16 @@ export interface ChatResponse {
 }
 
 export interface QuestionGenerationRequest {
-  book_title: string;
+  book_title?: string;
+  curriculum_id?: string;
   user_message: string;
   topics?: string[];
   count?: number;
   difficulty?: string[];
   question_types?: string[];
-  scope_type?: 'whole_book' | 'specific_topics';
+  scope_type?: 'whole_curriculum' | 'whole_book' | 'specific_topics';
   specific_topics?: string;
   time_limit?: number;
-  category_id?: string;
 }
 
 export interface Question {
@@ -83,7 +92,7 @@ export interface QuestionResponse {
 export interface LectureRequest {
   book_title: string;
   user_message: string;
-  category?: string;
+  curriculum?: string;
   title?: string;
   scope?: 'whole_book' | 'specific_topics';
   specific_topics?: string;
@@ -157,23 +166,4 @@ export interface LocalBook extends Book {
   last_read?: string;
 }
 
-// Category mapping (matching backend)
-export const CATEGORY_MAP = {
-  1: 'math',
-  2: 'science', 
-  3: 'physics',
-  4: 'chemistry',
-  5: 'history',
-  6: 'geology',
-  7: 'general'
-} as const;
 
-export const CATEGORY_NAMES = {
-  math: 'Mathematics',
-  science: 'Science',
-  physics: 'Physics', 
-  chemistry: 'Chemistry',
-  history: 'History',
-  geology: 'Geology',
-  general: 'General'
-} as const;

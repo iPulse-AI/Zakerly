@@ -6,9 +6,14 @@ export const API_ENDPOINTS = {
   // Books & Ingestion
   UPLOAD_BOOK: '/api/v1/upload',
   BOOKS: '/api/v1/books',
-  CATEGORIES: '/api/v1/categories',
   BOOK_BY_ID: (id: number) => `/api/v1/books/${id}`,
   DELETE_BOOK: (id: number) => `/api/v1/books/${id}`,
+  
+  // Curriculums
+  CURRICULUMS: '/api/v1/curriculums',
+  CURRICULUM_BY_ID: (id: number) => `/api/v1/curriculums/${id}`,
+  CURRICULUM_BOOKS: (id: number) => `/api/v1/curriculums/${id}/books`,
+  DELETE_CURRICULUM: (id: number) => `/api/v1/curriculums/${id}`,
   
   // Chat
   CHAT: '/api/v1/chat',

@@ -10,18 +10,18 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { BookOpen, Settings, Loader2 } from 'lucide-react';
-import { BooksService } from '@/lib/services';
-import type { Book as BookType, Category } from '@/lib/types';
+import { BookOpen, Settings, Loader2, GraduationCap, FileText } from 'lucide-react';
+import { BooksService, CurriculumService } from '@/lib/services';
+import type { Book as BookType, Curriculum } from '@/lib/types';
 
 interface ExamSetupConfig {
-  categoryId: string;
+  curriculumId: string;
   bookTitle: string;
   questionCount: number;
   timeLimit: number;
   difficulty: string[];
   questionTypes: string[];
-  scopeType: 'whole_book' | 'specific_topics';
+  scopeType: 'whole_curriculum' | 'whole_book' | 'specific_topics';
   specificTopics: string;
 }
 
@@ -32,18 +32,17 @@ const difficultyOptions = [
 ];
 
 const questionTypeOptions = [
-  { id: 'multiple_choice', label: 'Multiple Choice', description: 'Questions with 4 options' },
+  { id: 'multiple_choice_single_answer', label: 'Multiple Choice', description: 'Questions with 4 options' },
   { id: 'true_false', label: 'True/False', description: 'Binary choice questions' },
-  { id: 'short_answer', label: 'Short Answer', description: 'Brief written responses' },
-  { id: 'essay', label: 'Essay', description: 'Detailed written answers' }
+  { id: 'open_ended_question', label: 'Open Ended', description: 'Detailed written answers' }
 ];
 
 export default function ExamSetup() {
   const { bookTitle } = useParams<{ bookTitle: string }>();
   const navigate = useNavigate();
   
-  // State for categories and books
-  const [categories, setCategories] = useState<Category[]>([]);
+  // State for curriculums and books
+  const [curriculums, setCurriculums] = useState<Curriculum[]>([]);
   const [books, setBooks] = useState<BookType[]>([]);
   const [allBooks, setAllBooks] = useState<BookType[]>([]);
   const [isLoadingBooks, setIsLoadingBooks] = useState(true);
@@ -51,13 +50,13 @@ export default function ExamSetup() {
   const [error, setError] = useState('');
   
   const [examConfig, setExamConfig] = useState<ExamSetupConfig>({
-    categoryId: '',
+    curriculumId: '',
     bookTitle: bookTitle || '',
     questionCount: 10,
     timeLimit: 30,
     difficulty: ['medium'],
-    questionTypes: ['multiple_choice'],
-    scopeType: 'whole_book',
+    questionTypes: ['multiple_choice_single_answer'],
+    scopeType: 'whole_curriculum',
     specificTopics: ''
   });
 
@@ -68,26 +67,31 @@ export default function ExamSetup() {
   const loadData = async () => {
     try {
       setIsLoadingBooks(true);
-      const [booksData, categoriesData] = await Promise.all([
+      const [booksData, curriculumsData] = await Promise.all([
         BooksService.getBooks(),
-        BooksService.getCategories()
+        CurriculumService.getCurriculums()
       ]);
       setAllBooks(booksData);
       setBooks(booksData);
-      setCategories(categoriesData);
+      setCurriculums(curriculumsData);
     } catch (err) {
       console.error('Error loading data:', err);
-      setError('Failed to load books and categories');
+      setError('Failed to load books and curriculums');
     } finally {
       setIsLoadingBooks(false);
     }
   };
 
-  const handleCategoryChange = (categoryId: string) => {
-    setExamConfig(prev => ({ ...prev, categoryId, bookTitle: '' }));
+  const handleCurriculumChange = (curriculumId: string) => {
+    setExamConfig(prev => ({ 
+      ...prev, 
+      curriculumId, 
+      bookTitle: '',
+      scopeType: 'whole_curriculum' // Reset to curriculum by default
+    }));
     
-    if (categoryId) {
-      const filteredBooks = allBooks.filter(book => book.category_id.toString() === categoryId);
+    if (curriculumId) {
+      const filteredBooks = allBooks.filter(book => book.curriculum_id.toString() === curriculumId);
       setBooks(filteredBooks);
     } else {
       setBooks(allBooks);
@@ -116,22 +120,23 @@ export default function ExamSetup() {
     }));
   };
 
-  const handleScopeChange = (scope: 'whole_book' | 'specific_topics') => {
+  const handleScopeChange = (scope: 'whole_curriculum' | 'whole_book' | 'specific_topics') => {
     setExamConfig(prev => ({
       ...prev,
       scopeType: scope,
-      specificTopics: scope === 'whole_book' ? '' : prev.specificTopics
+      bookTitle: scope === 'whole_curriculum' ? '' : prev.bookTitle,
+      specificTopics: (scope === 'whole_curriculum' || scope === 'whole_book') ? '' : prev.specificTopics
     }));
   };
 
   const handleGenerateExam = () => {
     // Validate required fields
-    if (!examConfig.categoryId) {
-      setError('Please select a category');
+    if (!examConfig.curriculumId) {
+      setError('Please select a curriculum');
       return;
     }
     
-    if (!examConfig.bookTitle) {
+    if (examConfig.scopeType !== 'whole_curriculum' && !examConfig.bookTitle) {
       setError('Please select a book');
       return;
     }
@@ -156,7 +161,8 @@ export default function ExamSetup() {
 
     // Navigate to ExamView with parameters
     const params = new URLSearchParams({
-      book: examConfig.bookTitle,
+      curriculumId: examConfig.curriculumId,
+      book: examConfig.bookTitle || 'Whole Curriculum',
       questionCount: examConfig.questionCount.toString(),
       timeLimit: examConfig.timeLimit.toString(),
       difficulty: examConfig.difficulty.join(','),
@@ -168,6 +174,8 @@ export default function ExamSetup() {
     navigate(`/exam-view?${params.toString()}`);
   };
 
+  const selectedCurriculum = curriculums.find(c => c.id.toString() === examConfig.curriculumId);
+
   return (
     <div className="min-h-screen bg-background">
       <Header />
@@ -175,252 +183,366 @@ export default function ExamSetup() {
         {/* Header */}
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-3">
-            <BookOpen className="text-blue-600" size={28} />
+            <GraduationCap className="text-blue-600" size={32} />
             <div>
               <h1 className="text-3xl font-bold text-gray-900">Exam Setup</h1>
               <p className="text-gray-600">
-                {examConfig.bookTitle ? `Book: ${examConfig.bookTitle}` : 'Select a book to continue'}
+                Choose a curriculum and configure your exam settings
               </p>
             </div>
           </div>
         </div>
 
-      {/* Error Alert */}
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
-          {error}
-        </div>
-      )}
-
-      {/* Book Selection */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <BookOpen className="w-5 h-5" />
-            Select Book
-          </CardTitle>
-          <CardDescription>
-            Choose the category and book for your exam
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Category</Label>
-              <Select 
-                value={examConfig.categoryId} 
-                onValueChange={handleCategoryChange}
-                disabled={isLoadingBooks}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select category" />
-                </SelectTrigger>
-                <SelectContent>
-                  {categories.map((category) => (
-                    <SelectItem key={category.id} value={category.id.toString()}>
-                      {category.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Book</Label>
-              <Select 
-                value={examConfig.bookTitle} 
-                onValueChange={handleBookChange}
-                disabled={!examConfig.categoryId || isLoadingBooks}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select book" />
-                </SelectTrigger>
-                <SelectContent>
-                  {books.map((book) => (
-                    <SelectItem key={book.id} value={book.title}>
-                      {book.title}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+        {/* Error Alert */}
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+            {error}
           </div>
+        )}
 
-          {examConfig.bookTitle && (
-            <div className="p-4 bg-blue-50 rounded-lg">
-              <div className="flex items-center gap-2">
-                <BookOpen className="w-4 h-4 text-blue-600" />
-                <h4 className="font-medium text-blue-900">Selected Book</h4>
-              </div>
-              <p className="text-blue-700 mt-1">{examConfig.bookTitle}</p>
-              {books.find(b => b.title === examConfig.bookTitle)?.author && (
-                <p className="text-sm text-blue-600 mt-1">
-                  Author: {books.find(b => b.title === examConfig.bookTitle)?.author}
-                </p>
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Basic Configuration */}
+        {/* Step 1: Curriculum Selection */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Settings size={20} />
-              Basic Configuration
+              <GraduationCap className="w-5 h-5" />
+              Step 1: Select Curriculum
             </CardTitle>
             <CardDescription>
-              Set the fundamental parameters for your exam
+              Choose the curriculum that contains the content for your exam
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-6">
-            {/* Question Count */}
-            <div className="space-y-2">
-              <Label htmlFor="questionCount">Number of Questions</Label>
-              <Input
-                id="questionCount"
-                type="number"
-                min="1"
-                max="100"
-                value={examConfig.questionCount}
-                onChange={(e) => setExamConfig(prev => ({ ...prev, questionCount: parseInt(e.target.value) || 1 }))}
-                className="w-full"
-              />
-              <p className="text-sm text-gray-500">Choose between 1-100 questions</p>
-            </div>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Curriculum</Label>
+                <Select 
+                  value={examConfig.curriculumId} 
+                  onValueChange={handleCurriculumChange}
+                  disabled={isLoadingBooks}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a curriculum" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {curriculums.map((curriculum) => (
+                      <SelectItem key={curriculum.id} value={curriculum.id.toString()}>
+                        <div className="flex items-center gap-2">
+                          <GraduationCap className="w-4 h-4" />
+                          {curriculum.name}
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
 
-            {/* Time Limit */}
-            <div className="space-y-2">
-              <Label htmlFor="timeLimit">Time Limit (minutes)</Label>
-              <Input
-                id="timeLimit"
-                type="number"
-                min="5"
-                max="180"
-                value={examConfig.timeLimit}
-                onChange={(e) => setExamConfig(prev => ({ ...prev, timeLimit: parseInt(e.target.value) || 5 }))}
-                className="w-full"
-              />
-              <p className="text-sm text-gray-500">Set time limit between 5-180 minutes</p>
-            </div>
-
-            {/* Exam Scope */}
-            <div className="space-y-3">
-              <Label>Exam Scope</Label>
-              <RadioGroup 
-                value={examConfig.scopeType} 
-                onValueChange={handleScopeChange}
-                className="space-y-3"
-              >
-                <div className="flex items-center space-x-2">
-                  <RadioGroupItem value="whole_book" id="whole_book" />
-                  <Label htmlFor="whole_book" className="cursor-pointer">
-                    Whole Book
-                  </Label>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <RadioGroupItem value="specific_topics" id="specific_topics" />
-                  <Label htmlFor="specific_topics" className="cursor-pointer">
-                    Specific Topics
-                  </Label>
-                </div>
-              </RadioGroup>
-              
-              {examConfig.scopeType === 'specific_topics' && (
-                <div className="space-y-2 mt-3">
-                  <Label htmlFor="topics">Specify Topics</Label>
-                  <Textarea
-                    id="topics"
-                    placeholder="Enter specific topics, chapters, or concepts you want to focus on..."
-                    value={examConfig.specificTopics}
-                    onChange={(e) => setExamConfig(prev => ({ ...prev, specificTopics: e.target.value }))}
-                    className="min-h-[100px]"
-                  />
-                  <p className="text-sm text-gray-500">
-                    List the topics, chapters, or concepts you want the exam to focus on
+              {selectedCurriculum && (
+                <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
+                  <div className="flex items-center gap-2 mb-2">
+                    <GraduationCap className="w-5 h-5 text-blue-600" />
+                    <h4 className="font-semibold text-blue-900">{selectedCurriculum.name}</h4>
+                  </div>
+                  <p className="text-blue-700 text-sm mb-2">
+                    {selectedCurriculum.description || 'Selected curriculum'}
                   </p>
+                  <div className="flex items-center gap-4 text-sm text-blue-600">
+                    <span className="flex items-center gap-1">
+                      <BookOpen className="w-4 h-4" />
+                      {books.length} books available
+                    </span>
+                  </div>
                 </div>
               )}
             </div>
           </CardContent>
         </Card>
 
-        {/* Advanced Options */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Advanced Options</CardTitle>
-            <CardDescription>
-              Customize difficulty levels and question types
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {/* Difficulty Levels */}
-            <div className="space-y-3">
-              <Label>Difficulty Levels</Label>
-              <div className="space-y-3">
-                {difficultyOptions.map((option) => (
-                  <div key={option.id} className="flex items-start space-x-3">
-                    <Checkbox
-                      id={option.id}
-                      checked={examConfig.difficulty.includes(option.id)}
-                      onCheckedChange={(checked) => handleDifficultyChange(option.id, checked as boolean)}
+        {/* Step 2: Exam Scope Selection - Only show after curriculum is selected */}
+        {examConfig.curriculumId && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Settings className="w-5 h-5" />
+                Step 2: Choose Exam Scope
+              </CardTitle>
+              <CardDescription>
+                Decide what content to include in your exam from the selected curriculum
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <RadioGroup 
+                  value={examConfig.scopeType} 
+                  onValueChange={handleScopeChange}
+                  className="space-y-4"
+                >
+                  {/* Whole Curriculum Option */}
+                  <div className="flex items-start space-x-3 p-4 border-2 rounded-lg hover:bg-gray-50 transition-colors">
+                    <RadioGroupItem value="whole_curriculum" id="whole_curriculum" className="mt-1" />
+                    <Label htmlFor="whole_curriculum" className="cursor-pointer flex-1">
+                      <div className="flex items-center gap-2 mb-2">
+                        <GraduationCap className="w-5 h-5 text-blue-600" />
+                        <div className="font-semibold text-lg">Whole Curriculum Exam</div>
+                      </div>
+                      <div className="text-sm text-gray-600 mb-2">
+                        Generate a comprehensive exam covering all {books.length} books in the curriculum
+                      </div>
+                      <div className="text-xs text-blue-600 font-medium">
+                        ✓ Recommended for comprehensive assessment across multiple subject areas
+                      </div>
+                    </Label>
+                  </div>
+                  
+                  {/* Single Book Option */}
+                  <div className="flex items-start space-x-3 p-4 border-2 rounded-lg hover:bg-gray-50 transition-colors">
+                    <RadioGroupItem value="whole_book" id="whole_book" className="mt-1" />
+                    <Label htmlFor="whole_book" className="cursor-pointer flex-1">
+                      <div className="flex items-center gap-2 mb-2">
+                        <BookOpen className="w-5 h-5 text-green-600" />
+                        <div className="font-semibold text-lg">Single Book Exam</div>
+                      </div>
+                      <div className="text-sm text-gray-600 mb-2">
+                        Generate exam focused on one specific book from the curriculum
+                      </div>
+                      <div className="text-xs text-green-600 font-medium">
+                        ✓ Perfect for testing knowledge of specific topics or subject areas
+                      </div>
+                    </Label>
+                  </div>
+                  
+                  {/* Specific Topics Option */}
+                  <div className="flex items-start space-x-3 p-4 border-2 rounded-lg hover:bg-gray-50 transition-colors">
+                    <RadioGroupItem value="specific_topics" id="specific_topics" className="mt-1" />
+                    <Label htmlFor="specific_topics" className="cursor-pointer flex-1">
+                      <div className="flex items-center gap-2 mb-2">
+                        <FileText className="w-5 h-5 text-purple-600" />
+                        <div className="font-semibold text-lg">Specific Topics</div>
+                      </div>
+                      <div className="text-sm text-gray-600 mb-2">
+                        Focus on particular topics, chapters, or concepts you specify
+                      </div>
+                      <div className="text-xs text-purple-600 font-medium">
+                        ✓ Ideal for targeted assessment of specific learning objectives
+                      </div>
+                    </Label>
+                  </div>
+                </RadioGroup>
+
+                {/* Book Selection - Only show for single book and specific topics */}
+                {(examConfig.scopeType === 'whole_book' || examConfig.scopeType === 'specific_topics') && (
+                  <div className="space-y-2 mt-4">
+                    <Label>Select Book</Label>
+                    <Select 
+                      value={examConfig.bookTitle} 
+                      onValueChange={handleBookChange}
+                      disabled={!examConfig.curriculumId || isLoadingBooks}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Choose a book from the curriculum" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {books.map((book) => (
+                          <SelectItem key={book.id} value={book.title}>
+                            <div className="flex items-center gap-2">
+                              <BookOpen className="w-4 h-4" />
+                              {book.title}
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+                {/* Topics Input - Only show for specific topics */}
+                {examConfig.scopeType === 'specific_topics' && (
+                  <div className="space-y-2 mt-4">
+                    <Label htmlFor="topics">Specify Topics</Label>
+                    <Textarea
+                      id="topics"
+                      placeholder="Enter specific topics, chapters, or concepts you want to focus on..."
+                      value={examConfig.specificTopics}
+                      onChange={(e) => setExamConfig(prev => ({ ...prev, specificTopics: e.target.value }))}
+                      className="min-h-[100px]"
                     />
-                    <div className="space-y-1">
-                      <Label htmlFor={option.id} className="cursor-pointer font-medium">
-                        {option.label}
-                      </Label>
-                      <p className="text-sm text-gray-500">{option.description}</p>
+                    <p className="text-sm text-gray-500">
+                      List the topics, chapters, or concepts you want the exam to focus on
+                    </p>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Step 3: Exam Configuration - Only show after scope is selected */}
+        {examConfig.curriculumId && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Basic Configuration */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Settings size={20} />
+                  Step 3: Basic Settings
+                </CardTitle>
+                <CardDescription>
+                  Configure the fundamental parameters for your exam
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* Question Count */}
+                <div className="space-y-2">
+                  <Label htmlFor="questionCount">Number of Questions</Label>
+                  <Input
+                    id="questionCount"
+                    type="number"
+                    min="1"
+                    max="50"
+                    value={examConfig.questionCount}
+                    onChange={(e) => setExamConfig(prev => ({ ...prev, questionCount: parseInt(e.target.value) || 1 }))}
+                    className="w-full"
+                  />
+                  <p className="text-sm text-gray-500">Choose between 1-50 questions</p>
+                </div>
+
+                {/* Time Limit */}
+                <div className="space-y-2">
+                  <Label htmlFor="timeLimit">Time Limit (minutes)</Label>
+                  <Input
+                    id="timeLimit"
+                    type="number"
+                    min="5"
+                    max="180"
+                    value={examConfig.timeLimit}
+                    onChange={(e) => setExamConfig(prev => ({ ...prev, timeLimit: parseInt(e.target.value) || 5 }))}
+                    className="w-full"
+                  />
+                  <p className="text-sm text-gray-500">Set time limit between 5-180 minutes</p>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Advanced Options */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Advanced Options</CardTitle>
+                <CardDescription>
+                  Customize difficulty levels and question types
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* Difficulty Levels */}
+                <div className="space-y-3">
+                  <Label>Difficulty Levels</Label>
+                  <div className="space-y-3">
+                    {difficultyOptions.map((option) => (
+                      <div key={option.id} className="flex items-start space-x-3">
+                        <Checkbox
+                          id={option.id}
+                          checked={examConfig.difficulty.includes(option.id)}
+                          onCheckedChange={(checked) => handleDifficultyChange(option.id, checked as boolean)}
+                        />
+                        <div className="space-y-1">
+                          <Label htmlFor={option.id} className="cursor-pointer font-medium">
+                            {option.label}
+                          </Label>
+                          <p className="text-sm text-gray-500">{option.description}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Question Types */}
+                <div className="space-y-3">
+                  <Label>Question Types</Label>
+                  <div className="space-y-3">
+                    {questionTypeOptions.map((option) => (
+                      <div key={option.id} className="flex items-start space-x-3">
+                        <Checkbox
+                          id={option.id}
+                          checked={examConfig.questionTypes.includes(option.id)}
+                          onCheckedChange={(checked) => handleQuestionTypeChange(option.id, checked as boolean)}
+                        />
+                        <div className="space-y-1">
+                          <Label htmlFor={option.id} className="cursor-pointer font-medium">
+                            {option.label}
+                          </Label>
+                          <p className="text-sm text-gray-500">{option.description}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* Summary and Generate Button */}
+        {examConfig.curriculumId && (
+          <Card>
+            <CardContent className="pt-6">
+              <div className="space-y-4">
+                {/* Exam Summary */}
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <h4 className="font-semibold mb-3">Exam Summary</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="font-medium">Curriculum:</span> {selectedCurriculum?.name}
+                    </div>
+                    <div>
+                      <span className="font-medium">Scope:</span> {
+                        examConfig.scopeType === 'whole_curriculum' ? 'Whole Curriculum' :
+                        examConfig.scopeType === 'whole_book' ? `Book: ${examConfig.bookTitle}` :
+                        'Specific Topics'
+                      }
+                    </div>
+                    <div>
+                      <span className="font-medium">Questions:</span> {examConfig.questionCount}
+                    </div>
+                    <div>
+                      <span className="font-medium">Time Limit:</span> {examConfig.timeLimit} minutes
+                    </div>
+                    <div>
+                      <span className="font-medium">Difficulty:</span> {examConfig.difficulty.join(', ')}
+                    </div>
+                    <div>
+                      <span className="font-medium">Question Types:</span> {examConfig.questionTypes.length} selected
                     </div>
                   </div>
-                ))}
-              </div>
-            </div>
+                </div>
 
-            {/* Question Types */}
-            <div className="space-y-3">
-              <Label>Question Types</Label>
-              <div className="space-y-3">
-                {questionTypeOptions.map((option) => (
-                  <div key={option.id} className="flex items-start space-x-3">
-                    <Checkbox
-                      id={option.id}
-                      checked={examConfig.questionTypes.includes(option.id)}
-                      onCheckedChange={(checked) => handleQuestionTypeChange(option.id, checked as boolean)}
-                    />
-                    <div className="space-y-1">
-                      <Label htmlFor={option.id} className="cursor-pointer font-medium">
-                        {option.label}
-                      </Label>
-                      <p className="text-sm text-gray-500">{option.description}</p>
-                    </div>
-                  </div>
-                ))}
+                {/* Generate Button */}
+                <div className="flex justify-center pt-4">
+                  <Button 
+                    onClick={handleGenerateExam}
+                    disabled={
+                      isGenerating || 
+                      !examConfig.curriculumId || 
+                      (examConfig.scopeType !== 'whole_curriculum' && !examConfig.bookTitle) ||
+                      (examConfig.scopeType === 'specific_topics' && !examConfig.specificTopics.trim())
+                    }
+                    size="lg"
+                    className="px-8 py-3 text-lg"
+                  >
+                    {isGenerating ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Generating Preview...
+                      </>
+                    ) : (
+                      <>
+                        <GraduationCap className="w-4 h-4 mr-2" />
+                        Generate Exam Preview
+                      </>
+                    )}
+                  </Button>
+                </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Action Buttons */}
-      <div className="flex justify-center pt-6">
-        <Button 
-          onClick={handleGenerateExam}
-          disabled={isGenerating || !examConfig.categoryId || !examConfig.bookTitle}
-          size="lg"
-          className="px-8 py-3 text-lg"
-        >
-          {isGenerating ? (
-            <>
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              Generating Preview...
-            </>
-          ) : (
-            'Generate Exam Preview'
-          )}
-        </Button>
-      </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   );
