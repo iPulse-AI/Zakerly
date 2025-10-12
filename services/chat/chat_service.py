@@ -2,10 +2,12 @@ import logging
 from typing import List, Optional, Dict, Any
 import json
 import os
+import asyncio
+import asyncpg
 from datetime import datetime
+from contextlib import asynccontextmanager
 
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_community.llms import Ollama
 from langchain_community.embeddings import OllamaEmbeddings
 from langchain_community.vectorstores.pgvector import PGVector
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -48,21 +50,27 @@ class ChatService:
             base_url=os.getenv("OLLAMA_BASE_URL")
         )
         
-        # Primary LLM (Google Gemini)
-        self.llm = ChatGoogleGenerativeAI(
-            model=os.getenv("CHAT_MODEL_NAME", "gemini-1.5-flash"),
-            temperature=float(os.getenv("CHAT_MODEL_TEMPERATURE", "0.7")),
-            google_api_key=os.getenv("GOOGLE_API_KEY")
-        )
+        # Primary LLM (Google Gemini) with proper configuration for agents
+        gemini_model = os.getenv("CHAT_MODEL_NAME", "gemini-pro")
+        try:
+            self.llm = ChatGoogleGenerativeAI(
+                model=gemini_model,
+                temperature=float(os.getenv("CHAT_MODEL_TEMPERATURE", "0.7")),
+                google_api_key=os.getenv("GOOGLE_API_KEY"),
+                top_k=40,
+                top_p=0.8,
+                max_tokens=2048
+            )
+        except Exception as llm_init_error:
+            logger.warning(f"⚠️ Primary LLM initialization failed: {llm_init_error}")
+            # Initialize with basic configuration as fallback
+            self.llm = ChatGoogleGenerativeAI(
+                model=gemini_model,
+                temperature=0.7,
+                google_api_key=os.getenv("GOOGLE_API_KEY")
+            )
         
-        # Fallback LLM (Ollama) for when quota is exceeded
-        self.fallback_llm = Ollama(
-            model="llama3.1:8b",  # or another model you have available
-            base_url=os.getenv("OLLAMA_BASE_URL")
-        )
-        
-        # Track which LLM to use
-        self.use_fallback = False
+        # Using only Gemini - no fallback LLM
         
         self.connection_string = os.getenv("DATABASE_URL")
         
@@ -79,13 +87,8 @@ class ChatService:
         self._setup_prompts()
     
     def get_current_llm(self):
-        """Get the current LLM (primary or fallback)"""
-        return self.fallback_llm if self.use_fallback else self.llm
-    
-    def switch_to_fallback(self):
-        """Switch to fallback LLM when quota is exceeded"""
-        logger.warning("Switching to fallback LLM (Ollama) due to quota exceeded")
-        self.use_fallback = True
+        """Get the current LLM (Gemini only)"""
+        return self.llm
 
     def _setup_prompts(self):
         """Setup all prompt templates"""
@@ -769,13 +772,30 @@ End your response with: `(Source: Internal Knowledge Base)` or `(Source: Web Sea
         )
 
     async def _get_book_curriculum_info(self, book_title: str) -> Optional[Dict[str, Any]]:
-        """Get book information including curriculum"""
-        try:
-            book_info = await self.db.get_book_by_title(book_title)
-            return book_info
-        except Exception as e:
-            logger.error(f"Error getting book curriculum info for '{book_title}': {e}")
-            return None
+        """Get book information including curriculum with retries"""
+        max_retries = 3
+        retry_delay = 1  # seconds
+        
+        for attempt in range(max_retries):
+            try:
+                book_info = await self.db.get_book_by_title(book_title)
+                if book_info:
+                    logger.info(f"Successfully retrieved info for book '{book_title}' in curriculum '{book_info.get('curriculum_name')}'")
+                    return book_info
+                else:
+                    logger.warning(f"Book '{book_title}' not found in database")
+                    return None
+            except asyncpg.exceptions.ConnectionDoesNotExistError:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Connection lost, retrying in {retry_delay} seconds (attempt {attempt + 1}/{max_retries})")
+                    await asyncio.sleep(retry_delay)
+                    continue
+                else:
+                    logger.error(f"Failed to connect to database after {max_retries} attempts")
+                    raise
+            except Exception as e:
+                logger.error(f"Error getting book curriculum info for '{book_title}': {e}")
+                return None
     
     async def _search_curriculum_embeddings(self, curriculum_name: str, query: str, k: int = 6) -> List[Dict[str, Any]]:
         """Search curriculum-based embeddings"""
@@ -793,36 +813,644 @@ End your response with: `(Source: Internal Knowledge Base)` or `(Source: Web Sea
             logger.error(f"Error in curriculum embedding search for '{curriculum_name}': {e}")
             return []
 
-    async def _search_book_embeddings(self, curriculum_name: str, book_title: str, query: str, k: int = 6) -> List[Dict[str, Any]]:
-        """Search embeddings for a specific book within curriculum"""
+    async def _extract_book_topics(self, curriculum_name: str, book_title: str) -> List[str]:
+        """
+        STEP 1: Extract topics from Table of Contents
+        This replaces the previous random chunk topic extraction with systematic TOC analysis
+        """
         try:
-            logger.info(f"🔍 Searching book '{book_title}' in curriculum '{curriculum_name}' for query '{query}'")
+            logger.info(f"� STEP 1: Extracting topics from Table of Contents for '{book_title}'")
             
-            # First get the book_id from the book title
+            # First get book info with proper error handling
             book_info = await self._get_book_curriculum_info(book_title)
             if not book_info:
-                logger.warning(f"Book '{book_title}' not found, falling back to general search")
-                return await self._search_curriculum_embeddings(curriculum_name, query, k)
+                logger.warning(f"Book '{book_title}' not found for TOC extraction")
+                return self._get_default_topics(curriculum_name)
             
-            logger.info(f"🔍 Book info retrieved: {book_info}")
-            book_id = book_info.get('id')  # The book ID field is 'id', not 'book_id'
-            if not book_id:
-                logger.warning(f"Book ID not found for '{book_title}' in book_info: {book_info}, falling back to general search")
-                return await self._search_curriculum_embeddings(curriculum_name, query, k)
+            book_id = book_info['id']
+            actual_curriculum = book_info.get('curriculum_name', curriculum_name)
+            logger.info(f"� Book found: ID={book_id}, curriculum='{actual_curriculum}'")
             
-            # Generate embedding for the query
-            query_embedding = await self.embeddings.aembed_query(query)
+            # Method 1: Search for TOC-specific content
+            logger.info(f"🔍 METHOD 1: Searching for Table of Contents content")
+            toc_chunks = await self._search_for_toc_content(book_title, actual_curriculum, book_id)
             
-            # Search specifically in this book's embeddings
-            results = await self.db.search_book_specific_embeddings(curriculum_name, book_id, query_embedding, limit=k)
+            # Method 2: Get chunks from beginning of book (where TOC usually is)
+            logger.info(f"🔍 METHOD 2: Getting chunks from book beginning")
+            beginning_chunks = await self._get_beginning_chunks(book_title, actual_curriculum, book_id)
             
-            logger.info(f"✅ Retrieved {len(results)} chunks from book '{book_title}' (ID: {book_id})")
-            return results
+            # Combine all potential TOC chunks
+            all_toc_chunks = toc_chunks + beginning_chunks
+            logger.info(f"📊 FOUND {len(all_toc_chunks)} potential TOC chunks")
+            
+            if not all_toc_chunks:
+                logger.warning("⚠️ No TOC content found, falling back to content-based topic extraction")
+                return await self._extract_topics_from_content_fallback(book_title, actual_curriculum, book_id)
+            
+            # Extract topics from TOC content
+            topics = await self._parse_toc_topics(all_toc_chunks, book_title, actual_curriculum)
+            
+            if topics:
+                logger.info(f"✅ STEP 1 SUCCESS: Extracted {len(topics)} topics from TOC: {topics}")
+                return topics
+            else:
+                logger.warning("⚠️ TOC parsing failed, using fallback method")
+                return await self._extract_topics_from_content_fallback(book_title, actual_curriculum, book_id)
+                
+        except Exception as e:
+            logger.error(f"❌ Error extracting topics from TOC: {e}")
+            return self._get_default_topics(curriculum_name)
+
+    async def _search_for_toc_content(self, book_title: str, curriculum_name: str, book_id: int) -> List[Dict[str, Any]]:
+        """Search for chunks containing table of contents using multiple TOC-related queries"""
+        toc_queries = [
+            "table of contents",
+            "contents", 
+            "chapter",
+            "section",
+            "overview",
+            "outline",
+            "index"
+        ]
+        
+        toc_chunks = []
+        for query in toc_queries:
+            try:
+                logger.info(f"🔍 Searching for TOC with query: '{query}'")
+                chunks = await self._search_book_embeddings_safe(book_title, curriculum_name, query, k=2)
+                if chunks:
+                    logger.info(f"✅ Found {len(chunks)} chunks for TOC query '{query}'")
+                    toc_chunks.extend(chunks)
+            except Exception as e:
+                logger.warning(f"⚠️ Error searching for TOC with query '{query}': {e}")
+                continue
+        
+        # Remove duplicates based on content
+        unique_chunks = []
+        seen_content = set()
+        for chunk in toc_chunks:
+            if isinstance(chunk, dict) and 'content' in chunk:
+                content_hash = hash(chunk['content'][:100])
+                if content_hash not in seen_content:
+                    unique_chunks.append(chunk)
+                    seen_content.add(content_hash)
+        
+        logger.info(f"📚 TOC SEARCH: Found {len(unique_chunks)} unique TOC chunks")
+        return unique_chunks
+
+    async def _get_beginning_chunks(self, book_title: str, curriculum_name: str, book_id: int, chunk_count: int = 8) -> List[Dict[str, Any]]:
+        """Get chunks from the beginning of the book where TOC typically appears"""
+        try:
+            async with self.get_db_connection() as conn:
+                table_name = f"curriculum_embeddings_{curriculum_name.lower().replace(' ', '_')}"
+                
+                # Check if table exists first
+                table_exists_query = """
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = $1
+                )
+                """
+                table_exists = await conn.fetchval(table_exists_query, table_name)
+                
+                if not table_exists:
+                    logger.warning(f"⚠️ Table {table_name} does not exist")
+                    return []
+                
+                # Get first chunks (assuming they're ordered by position in document)
+                query = f"""
+                SELECT content, metadata 
+                FROM {table_name} 
+                WHERE book_id = $1 
+                ORDER BY id 
+                LIMIT $2
+                """
+                
+                results = await conn.fetch(query, book_id, chunk_count)
+                
+                chunks = []
+                for row in results:
+                    chunks.append({
+                        'content': row['content'],
+                        'metadata': row['metadata'] if row['metadata'] else {}
+                    })
+                
+                logger.info(f"📖 BEGINNING CHUNKS: Retrieved {len(chunks)} chunks from book start")
+                return chunks
+                
+        except Exception as e:
+            logger.error(f"❌ Error getting beginning chunks: {e}")
+            return []
+
+    async def _parse_toc_topics(self, toc_chunks: List[Dict[str, Any]], book_title: str, curriculum_name: str) -> List[str]:
+        """Parse Table of Contents content to extract topics/chapters using LLM"""
+        try:
+            # Combine all TOC content
+            toc_content = "\n\n".join([chunk.get('content', '') for chunk in toc_chunks if chunk.get('content')])
+            logger.info(f"📝 TOC CONTENT: {len(toc_content)} characters to parse")
+            
+            if not toc_content.strip():
+                logger.warning("⚠️ No valid TOC content to parse")
+                return []
+            
+            # Sample the content for logging
+            content_preview = toc_content[:300] + "..." if len(toc_content) > 300 else toc_content
+            logger.info(f"📄 TOC PREVIEW: {content_preview}")
+            
+            # Use LLM to extract structured topics from TOC
+            prompt = f"""
+Analyze the following Table of Contents or beginning content from the book "{book_title}" and extract the main topics, chapters, or sections.
+
+CONTENT TO ANALYZE:
+{toc_content[:4000]}
+
+TASK: Extract a clean list of main topics/chapters from this content. Focus on:
+- Chapter titles
+- Section headings  
+- Main topics
+- Key subject areas relevant to {curriculum_name}
+
+Return ONLY a JSON array of topic strings, like:
+["Topic 1", "Topic 2", "Topic 3", ...]
+
+Maximum 10 topics. Be concise and focus on the most important {curriculum_name}-related topics.
+Exclude generic terms like "Introduction", "Conclusion", "References", "Index".
+"""
+
+            logger.info(f"🚀 SENDING TOC to LLM for topic extraction")
+            
+            # Create LLM chain for topic extraction
+            topic_prompt = ChatPromptTemplate.from_messages([
+                ("system", "You are an expert at analyzing table of contents and extracting meaningful topics from academic and technical books."),
+                ("human", prompt)
+            ])
+            
+            chain = topic_prompt | self.get_current_llm() | StrOutputParser()
+            response = await chain.ainvoke({})
+            
+            # Parse the response
+            topics = self._parse_topics_from_llm_response(response)
+            
+            if topics:
+                logger.info(f"✅ TOC PARSING SUCCESS: Extracted {len(topics)} topics")
+                return topics
+            else:
+                logger.warning("⚠️ TOC parsing returned no topics")
+                return []
+                
+        except Exception as e:
+            logger.error(f"❌ Error parsing TOC topics: {e}")
+            return []
+
+    def _parse_topics_from_llm_response(self, response_content: str) -> List[str]:
+        """Parse topics from LLM response, handling various response formats"""
+        try:
+            import json
+            import re
+            
+            logger.info(f"🔍 Parsing LLM response: {response_content[:200]}...")
+            
+            # Method 1: Try to find JSON array in response
+            json_match = re.search(r'\[.*?\]', response_content, re.DOTALL)
+            if json_match:
+                try:
+                    json_str = json_match.group()
+                    topics = json.loads(json_str)
+                    
+                    if isinstance(topics, list):
+                        # Clean and filter topics
+                        clean_topics = []
+                        for topic in topics:
+                            if isinstance(topic, str) and len(topic.strip()) > 2:
+                                # Remove quotes and clean up
+                                clean_topic = topic.strip().strip('"\'')
+                                if clean_topic.lower() not in ['introduction', 'conclusion', 'references', 'index', 'appendix']:
+                                    clean_topics.append(clean_topic)
+                        
+                        logger.info(f"📋 PARSED TOPICS (JSON): {clean_topics}")
+                        return clean_topics[:10]  # Limit to 10 topics
+                except json.JSONDecodeError:
+                    logger.warning("⚠️ Failed to parse JSON from response")
+            
+            # Method 2: Try to extract topics from numbered/bulleted lists
+            lines = response_content.split('\n')
+            topics = []
+            for line in lines:
+                line = line.strip()
+                # Look for patterns like "1. Topic", "- Topic", "• Topic"
+                topic_match = re.match(r'^[\d\-\•\*\+]\s*\.?\s*(.+)$', line)
+                if topic_match:
+                    topic = topic_match.group(1).strip().strip('"\'')
+                    if len(topic) > 2 and topic.lower() not in ['introduction', 'conclusion', 'references', 'index', 'appendix']:
+                        topics.append(topic)
+            
+            if topics:
+                logger.info(f"📋 PARSED TOPICS (List): {topics}")
+                return topics[:10]
+            
+            # Method 3: Split by common separators if no structure found
+            if ',' in response_content:
+                topics = [t.strip().strip('"\'') for t in response_content.split(',')]
+                clean_topics = [t for t in topics if len(t) > 2 and t.lower() not in ['introduction', 'conclusion', 'references', 'index', 'appendix']]
+                if clean_topics:
+                    logger.info(f"📋 PARSED TOPICS (Comma-separated): {clean_topics}")
+                    return clean_topics[:10]
+            
+            logger.warning("⚠️ Could not parse topics from LLM response")
+            return []
             
         except Exception as e:
-            logger.error(f"❌ Error in book embedding search for '{book_title}': {e}")
-            # Fallback to general curriculum search
-            return await self._search_curriculum_embeddings(curriculum_name, query, k)
+            logger.error(f"❌ Error parsing topics from response: {e}")
+            return []
+
+    async def _extract_topics_from_content_fallback(self, book_title: str, curriculum_name: str, book_id: int) -> List[str]:
+        """Fallback method to extract topics when TOC approach fails"""
+        try:
+            logger.info(f"🔄 FALLBACK: Extracting topics from general content for '{book_title}'")
+            
+            # Get general content samples for topic extraction
+            initial_query = "main topics key concepts principles overview"
+            query_embedding = await self.embeddings.aembed_query(initial_query)
+            
+            initial_results = await self.db.search_book_specific_embeddings(
+                curriculum_name, book_id, query_embedding, limit=5
+            )
+            
+            if not initial_results:
+                logger.warning(f"⚠️ No content found for fallback topic extraction")
+                return self._get_curriculum_specific_topics(curriculum_name)
+            
+            logger.info(f"📊 FALLBACK: Found {len(initial_results)} content chunks")
+            
+            # Extract topics using LLM with curriculum-specific prompting
+            content = "\n\n".join(r['content'] for r in initial_results)
+            topic_prompt = ChatPromptTemplate.from_messages([
+                ("system", f"""You are an expert {curriculum_name} curriculum analyzer. Extract the main topics covered in this {curriculum_name} text.
+                Return ONLY a comma-separated list of 5-8 specific topics that are relevant to {curriculum_name} studies.
+                Focus on major themes and subject areas in {curriculum_name}.
+                Do not include generic terms like 'introduction' or 'conclusion'."""),
+                ("human", "Content: {content}\nExtract the main topics from this content.")
+            ])
+            
+            chain = topic_prompt | self.get_current_llm() | StrOutputParser()
+            topics_result = await chain.ainvoke({"content": content})
+            
+            # Parse and validate topics
+            topics = [t.strip() for t in topics_result.split(',') if t.strip() and len(t.strip()) > 3]
+            
+            if not topics:
+                logger.warning("⚠️ FALLBACK: No valid topics extracted, using curriculum defaults")
+                return self._get_curriculum_specific_topics(curriculum_name)
+            
+            logger.info(f"✅ FALLBACK SUCCESS: Extracted {len(topics)} topics: {topics}")
+            return topics
+            
+        except Exception as e:
+            logger.error(f"❌ FALLBACK ERROR: {e}")
+            return self._get_curriculum_specific_topics(curriculum_name)
+
+    async def _generate_fallback_questions(self, book_title: str, curriculum_name: str, exam_parameters: Dict[str, Any]) -> List[Question]:
+        """Generate fallback questions when the agent-based approach fails"""
+        try:
+            logger.info("🔄 Using fallback method for book '%s' topic '%s'", book_title, "comprehensive book content")
+            
+            # Get content through vector search
+            all_chunks = []  # Initialize empty list
+            try:
+                # Try to get content specifically from the book first
+                search_query = "overview introduction main concepts"
+                query_embedding = await self.embeddings.aembed_query(search_query)
+                
+                book_info = await self._get_book_curriculum_info(book_title)
+                if book_info and 'id' in book_info:
+                    chunks = await self.db.search_book_specific_embeddings(
+                        curriculum_name,
+                        book_info['id'],
+                        query_embedding,
+                        limit=5
+                    )
+                    if chunks and isinstance(chunks, list):
+                        # Filter out None values and get content
+                        valid_chunks = [c.get('content') for c in chunks if c and isinstance(c, dict) and c.get('content')]
+                        if valid_chunks:
+                            all_chunks.extend(valid_chunks)
+                            logger.info("✅ Found %d valid chunks from book search", len(valid_chunks))
+                        else:
+                            logger.warning("⚠️ No valid content found in book chunks")
+                
+                # Get some curriculum-wide content as well
+                curr_chunks = await self.db.search_curriculum_embeddings(curriculum_name, query_embedding, limit=3)
+                if curr_chunks and isinstance(curr_chunks, list):
+                    # Filter out None values and get content
+                    valid_curr_chunks = [c.get('content') for c in curr_chunks if c and isinstance(c, dict) and c.get('content')]
+                    if valid_curr_chunks:
+                        all_chunks.extend(valid_curr_chunks)
+                        logger.info("✅ Retrieved %d valid chunks from curriculum '%s'", len(valid_curr_chunks), curriculum_name)
+                    else:
+                        logger.warning("⚠️ No valid content found in curriculum chunks")
+                
+                if not all_chunks:
+                    logger.warning(f"⚠️ No content found for book '{book_title}' or curriculum '{curriculum_name}'")
+                    
+            except Exception as e:
+                logger.error("❌ Error in vector search: %s", e)
+                # Don't rethrow - allow fallback to continue with empty chunks
+            
+            logger.info("✅ Fallback method retrieved %d content chunks", len(all_chunks))
+            
+            if all_chunks:
+                # Prepare content for question generation
+                content = "\n\n".join(chunk.get('content', '') for chunk in all_chunks)
+                
+                # Create questions using structured prompt
+                system_prompt = f"""You are an expert {curriculum_name} educator. Generate {exam_parameters['count']} questions based on the provided content.
+                Each question must be properly formatted as a JSON object with these fields:
+                - difficulty: {exam_parameters['difficulty']}
+                - type: {exam_parameters['question_types']}
+                - question_text: The actual question
+                - options: Array of 4 choices for multiple choice questions
+                - answer: The correct answer"""
+                
+                human_prompt = f"Content:\n{content}\n\nGenerate {exam_parameters['count']} questions about this content."
+                
+                chain = ChatPromptTemplate.from_messages([
+                    ("system", system_prompt),
+                    ("human", human_prompt)
+                ]) | self.get_current_llm() | StrOutputParser()
+                
+                result = await chain.ainvoke({})
+                
+                try:
+                    questions_data = json.loads(result)
+                    if isinstance(questions_data, list) and questions_data:
+                        questions = []
+                        for q_data in questions_data:
+                            question = Question(
+                                difficulty=q_data.get('difficulty', exam_parameters['difficulty'][0]),
+                                type=q_data.get('type', exam_parameters['question_types'][0]),
+                                question_text=q_data.get('question_text', ''),
+                                options=q_data.get('options', []),
+                                answer=str(q_data.get('answer', ''))
+                            )
+                            questions.append(question)
+                        
+                        if questions:
+                            logger.info(f"✅ Successfully generated {len(questions)} fallback questions")
+                            return questions[:exam_parameters['count']]
+                except Exception as e:
+                    logger.error(f"Error parsing fallback questions: {e}")
+            
+            # If all else fails, use default questions
+            fallback_topics = [curriculum_name, "general knowledge"]
+            return self._generate_default_questions(exam_parameters, fallback_topics)
+            
+        except Exception as e:
+            logger.error(f"Error in fallback question generation: {e}")
+            return self._generate_default_questions(exam_parameters, [])
+    
+    def _generate_default_questions(self, exam_parameters: Dict[str, Any], topics: List[str]) -> List[Question]:
+        """Generate very basic default questions when all else fails"""
+        try:
+            if not exam_parameters:
+                logger.error("❌ No exam parameters provided for default questions")
+                exam_parameters = {
+                    'count': 5,
+                    'difficulty': ['medium'],
+                    'question_types': ['multiple_choice_single_answer']
+                }
+            
+            # Ensure we have required parameters with defaults
+            count = exam_parameters.get('count', 5)
+            difficulties = exam_parameters.get('difficulty', ['medium'])
+            question_types = exam_parameters.get('question_types', ['multiple_choice_single_answer'])
+            
+            # Ensure topics is a list and not empty
+            topics = topics or ["general knowledge", "core concepts", "basic principles"]
+            if not isinstance(topics, list):
+                topics = [str(topics)]
+            
+            questions = []
+            for i in range(count):
+                try:
+                    # Rotate through topics
+                    topic = topics[i % len(topics)]
+                    
+                    # Rotate through difficulties if multiple provided
+                    difficulty = difficulties[i % len(difficulties)]
+                    
+                    # Rotate through question types if multiple provided
+                    question_type = question_types[i % len(question_types)]
+                    
+                    # Generate appropriate question based on type
+                    if question_type == 'multiple_choice_single_answer':
+                        question = Question(
+                            difficulty=difficulty,
+                            type=question_type,
+                            question_text=f"What are the key principles of {topic}?",
+                            options=[
+                                f"Key concepts and fundamentals of {topic}",
+                                f"Basic elements of {topic}",
+                                f"Advanced aspects of {topic}",
+                                f"Theoretical foundations of {topic}"
+                            ],
+                            answer=f"Key concepts and fundamentals of {topic}"
+                        )
+                    elif question_type == 'true_false':
+                        question = Question(
+                            difficulty=difficulty,
+                            type=question_type,
+                            question_text=f"{topic} is a fundamental concept in this subject.",
+                            options=[],
+                            answer="True"
+                        )
+                    else:  # open_ended_question
+                        question = Question(
+                            difficulty=difficulty,
+                            type='open_ended_question',
+                            question_text=f"Explain the key principles and concepts of {topic} in detail.",
+                            options=[],
+                            answer=f"A comprehensive explanation of {topic} should include its key principles, concepts, and practical applications."
+                        )
+                    
+                    questions.append(question)
+                    
+                except Exception as q_error:
+                    logger.error(f"❌ Error generating default question {i}: {q_error}")
+                    continue
+            
+            logger.info(f"✅ Generated {len(questions)} default questions")
+            return questions
+            
+        except Exception as e:
+            logger.error(f"❌ Error in default question generation: {e}")
+            # Ultimate fallback - return a single generic question
+            return [Question(
+                difficulty='medium',
+                type='open_ended_question',
+                question_text="Explain the key concepts covered in this material.",
+                options=[],
+                answer="A comprehensive explanation of the key concepts and principles."
+            )]
+    
+    def _get_curriculum_specific_topics(self, curriculum_name: str) -> List[str]:
+        """Get curriculum-specific default topics"""
+        curriculum_topics = {
+            'law': [
+                "civil law fundamentals",
+                "contract formation and obligations",
+                "property rights and ownership",
+                "legal procedures and remedies",
+                "judicial system and courts",
+                "civil liability and damages",
+                "legal documentation requirements",
+                "statutory interpretation principles"
+            ],
+            'medical': [
+                "clinical diagnosis procedures",
+                "treatment methodologies",
+                "patient care protocols",
+                "medical ethics guidelines",
+                "healthcare procedures",
+                "disease management",
+                "preventive medicine practices",
+                "medical documentation standards"
+            ],
+            'it': [
+                "software development principles",
+                "system architecture",
+                "database management",
+                "network security",
+                "application design",
+                "programming fundamentals",
+                "system integration",
+                "technology infrastructure"
+            ]
+        }
+        
+        # Get the normalized curriculum name
+        norm_curriculum = next(
+            (k for k in curriculum_topics.keys() if k in curriculum_name.lower()),
+            'general'
+        )
+        
+        if norm_curriculum in curriculum_topics:
+            return curriculum_topics[norm_curriculum]
+        
+        # Fallback to generic topics if curriculum not recognized
+        return [
+            "key concepts and principles",
+            "fundamental theories",
+            "practical applications",
+            "standard methodologies",
+            "best practices",
+            "industry standards",
+            "implementation techniques",
+            "professional guidelines"
+        ]
+        
+    def _get_default_topics(self, curriculum_name: str) -> List[str]:
+        """Get default topics based on curriculum type (legacy method)"""
+        return self._get_curriculum_specific_topics(curriculum_name)
+
+    async def _search_book_embeddings(self, curriculum_name: str, book_title: str, query: str, k: int = 8) -> List[Dict[str, Any]]:
+        """Search embeddings for a specific book within curriculum with smart topic extraction"""
+        max_retries = 3
+        retry_delay = 1  # seconds
+        
+        # Initialize search_query
+        search_query = query
+        
+        # For comprehensive searches, enhance with extracted topics
+        if "comprehensive book content" in query.lower() or "whole book" in query.lower():
+            topics = await self._extract_book_topics(curriculum_name, book_title)
+            # Create a focused search query from the extracted topics
+            search_query = f"{query} {' '.join(topics)}"
+            logger.info(f"🎯 Using enhanced search query with topics: {search_query}")
+        
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"🔍 Searching book '{book_title}' in curriculum '{curriculum_name}' using search query: {search_query}")
+                
+                # First get the book_id from the book title
+                book_info = await self._get_book_curriculum_info(book_title)
+                if not book_info:
+                    logger.warning(f"Book '{book_title}' not found, falling back to general search")
+                    return await self._search_curriculum_embeddings(curriculum_name, query, k)
+                
+                logger.info(f"🔍 Book info retrieved: {book_info}")
+                book_id = book_info.get('id')
+                if not book_id:
+                    logger.warning(f"Book ID not found for '{book_title}' in book_info: {book_info}, falling back to general search")
+                    return await self._search_curriculum_embeddings(curriculum_name, query, k)
+                
+                # Generate embedding for the query
+                query_embedding = None
+                try:
+                    query_embedding = await self.embeddings.aembed_query(query)
+                except Exception as embed_err:
+                    logger.error(f"❌ Error generating embedding for query: {embed_err}")
+                    if attempt < max_retries - 1:
+                        logger.info(f"🔄 Retrying embedding generation in {retry_delay} seconds")
+                        await asyncio.sleep(retry_delay)
+                        continue
+                    else:
+                        raise
+                
+                # Search specifically in this book's embeddings
+                try:
+                    results = await self.db.search_book_specific_embeddings(curriculum_name, book_id, query_embedding, limit=k)
+                except asyncpg.exceptions.ConnectionDoesNotExistError:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Database connection lost, retrying in {retry_delay} seconds")
+                        await asyncio.sleep(retry_delay)
+                        continue
+                    else:
+                        logger.error(f"Failed to connect to database after {max_retries} attempts")
+                        return await self._search_curriculum_embeddings(curriculum_name, query, k)
+                except asyncpg.exceptions.InFailedSQLTransactionError:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"SQL transaction failed, retrying in {retry_delay} seconds")
+                        await asyncio.sleep(retry_delay)
+                        continue
+                    else:
+                        return await self._search_curriculum_embeddings(curriculum_name, query, k)
+                
+                if not results:
+                    logger.warning(f"⚠️ No embeddings found for book '{book_title}' in curriculum '{curriculum_name}'")
+                    # Try searching in curriculum-wide embeddings as fallback
+                    logger.info(f"🔄 Attempting fallback to curriculum-wide search for '{book_title}'")
+                    return await self._search_curriculum_embeddings(curriculum_name, query, k)
+                
+                logger.info(f"✅ Retrieved {len(results)} chunks from book '{book_title}' (ID: {book_id})")
+                return results
+                
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.error(f"❌ Error in book embedding search (attempt {attempt + 1}): {e}")
+                    await asyncio.sleep(retry_delay)
+                    continue
+                else:
+                    logger.error(f"❌ All attempts failed for book embedding search: {e}")
+                    # Final fallback to general curriculum search
+                    return await self._search_curriculum_embeddings(curriculum_name, query, k)
+        
+        logger.error(f"❌ All retries failed when searching book embeddings for '{book_title}'")
+        return await self._search_curriculum_embeddings(curriculum_name, query, k)
+
+    async def _search_book_embeddings_safe(self, book_title: str, curriculum_name: str, query: str, k: int = 8) -> List[Dict[str, Any]]:
+        """Safe wrapper around _search_book_embeddings with error handling for TOC searches"""
+        try:
+            # Note: parameter order is different in the actual method
+            return await self._search_book_embeddings(curriculum_name, book_title, query, k)
+        except Exception as e:
+            logger.warning(f"⚠️ Error in safe book embeddings search: {e}")
+            return []
+
+    @asynccontextmanager
+    async def get_db_connection(self):
+        """Get database connection from the database manager"""
+        async with self.db.get_connection() as conn:
+            yield conn
 
     def _create_curriculum_question_tool(self, curriculum_name: str, exam_parameters: Dict[str, Any]) -> Tool:
         """Create agent tool for generating questions from entire curriculum"""
@@ -889,12 +1517,24 @@ Please generate {exam_parameters.get('count', 10)} exam questions based on this 
                 logger.info(f"📚 BOOK QUESTION TOOL: Generating questions for book '{book_title}' in curriculum '{curriculum_name}' on topic '{topic_query}'")
                 logger.info(f"📋 Parameters: {exam_parameters}")
                 
-                # Search specific book content using book-specific search
-                # Use broader search terms to ensure we find content
-                if not topic_query or topic_query.strip() == "":
-                    search_query = "data lakehouse architecture configuration storage performance"
+                # First get topics from the book structure
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            future = executor.submit(asyncio.run, self._extract_book_topics(curriculum_name, book_title))
+                            topics = future.result()
+                    else:
+                        topics = loop.run_until_complete(self._extract_book_topics(curriculum_name, book_title))
+                except RuntimeError:
+                    topics = asyncio.run(self._extract_book_topics(curriculum_name, book_title))
+                
+                if topics:
+                    logger.info(f"📑 Using extracted book topics: {topics}")
+                    search_query = " ".join(topics[:3])  # Use top 3 topics
                 else:
-                    search_query = f"{topic_query} data lakehouse architecture configuration"
+                    search_query = topic_query if topic_query and topic_query.strip() else "introduction main concepts key principles"
                 
                 try:
                     loop = asyncio.get_event_loop()
@@ -913,7 +1553,8 @@ Please generate {exam_parameters.get('count', 10)} exam questions based on this 
                     content_chunks = [r['content'] for r in results]
                     combined_content = "\n\n".join(content_chunks[:8])
                     
-                    logger.info(f"✅ Found {len(results)} relevant content chunks from '{book_title}'")
+                    logger.info(f"✅ CHUNK RETRIEVAL: Found {len(results)} relevant content chunks from '{book_title}' using search query: '{search_query}'")
+                    logger.info(f"📝 CHUNK PREVIEW: First chunk preview: {content_chunks[0][:200]}..." if content_chunks else "No content in chunks")
                 else:
                     logger.warning(f"⚠️ No content found for book '{book_title}' on topic '{topic_query}'")
                     combined_content = f"No specific content found for topic '{topic_query}' in book '{book_title}'. Please generate general questions about the topic."
@@ -1016,98 +1657,102 @@ Requirements:
             func=generate_topic_questions
         )
 
-    async def _search_vector_table(self, table_name: str, query: str, k: int = 6) -> List[str]:
+    def _search_vector_table(self, table_name: str, query: str, k: int = 6) -> List[str]:
         """Search vector table directly using embeddings"""
         try:
-            # Generate embedding for the query
-            query_embedding = await self.embeddings.aembed_query(query)
+            import asyncio
+            # Generate embedding for the query using synchronous method
+            query_embedding = asyncio.run(self.embeddings.aembed_query(query))
             
             # Convert to PostgreSQL vector format
             embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
             
-            # Connect to database and search
-            import asyncpg
-            conn = await asyncpg.connect(self.connection_string)
+            # Connect to database and search synchronously
+            import psycopg2
+            conn = psycopg2.connect(self.connection_string)
             
             try:
-                # Check if table exists (case-insensitive)
-                table_exists = await conn.fetchval("""
-                    SELECT EXISTS (
-                        SELECT FROM information_schema.tables 
-                        WHERE LOWER(table_name) = LOWER($1)
-                    )
-                """, table_name.lower())
-                
-                if not table_exists:
-                    logger.error(f"Vector table '{table_name}' does not exist")
-                    # Try to find the actual table name by looking for tables with embedding column
-                    vector_tables = await conn.fetch("""
-                        SELECT DISTINCT t.table_name
-                        FROM information_schema.tables t
-                        JOIN information_schema.columns c ON t.table_name = c.table_name
-                        WHERE t.table_schema = 'public' 
-                        AND c.column_name = 'embedding'
-                        ORDER BY t.table_name
-                    """)
+                with conn.cursor() as cur:
+                    # Check if table exists (case-insensitive)
+                    cur.execute("""
+                        SELECT EXISTS (
+                            SELECT FROM information_schema.tables 
+                            WHERE LOWER(table_name) = LOWER(%s)
+                        )
+                    """, (table_name.lower(),))
+                    table_exists = cur.fetchone()[0]
                     
-                    if vector_tables:
-                        logger.info(f"Available vector tables: {[t['table_name'] for t in vector_tables]}")
+                    if not table_exists:
+                        logger.error(f"Vector table '{table_name}' does not exist")
+                        # Try to find the actual table name by looking for tables with embedding column
+                        cur.execute("""
+                            SELECT DISTINCT t.table_name
+                            FROM information_schema.tables t
+                            JOIN information_schema.columns c ON t.table_name = c.table_name
+                            WHERE t.table_schema = 'public' 
+                            AND c.column_name = 'embedding'
+                            ORDER BY t.table_name
+                        """)
+                        vector_tables = cur.fetchall()
                         
-                        # Try to find a table that matches the book title pattern
-                        # Look for tables that contain key words from the original book title
-                        book_title = getattr(self, '_current_book_title', '')
-                        if book_title:
-                            # Try exact match with full title first
-                            for table in vector_tables:
-                                if table['table_name'].upper() == book_title.upper():
-                                    logger.info(f"Found exact match: {table['table_name']}")
-                                    table_name = table['table_name']
-                                    break
-                            else:
-                                # Try partial matches
-                                book_words = set(book_title.upper().split('_'))
-                                best_match = None
-                                best_score = 0
-                                
+                        if vector_tables:
+                            logger.info(f"Available vector tables: {[t[0] for t in vector_tables]}")
+                            
+                            # Try to find a table that matches the book title pattern
+                            # Look for tables that contain key words from the original book title
+                            book_title = getattr(self, '_current_book_title', '')
+                            if book_title:
+                                # Try exact match with full title first
                                 for table in vector_tables:
-                                    table_words = set(table['table_name'].upper().split('_'))
-                                    common_words = book_words.intersection(table_words)
-                                    score = len(common_words)
-                                    
-                                    if score > best_score:
-                                        best_score = score
-                                        best_match = table['table_name']
-                                
-                                if best_match and best_score > 0:
-                                    logger.info(f"Using best match table: {best_match} (score: {best_score})")
-                                    table_name = best_match
+                                    if table[0].upper() == book_title.upper():
+                                        logger.info(f"Found exact match: {table[0]}")
+                                        table_name = table[0]
+                                        break
                                 else:
-                                    logger.error(f"No suitable vector table found for book: {book_title}")
-                                    return []
+                                    # Try partial matches
+                                    book_words = set(book_title.upper().split('_'))
+                                    best_match = None
+                                    best_score = 0
+                                    
+                                    for table in vector_tables:
+                                        table_words = set(table[0].upper().split('_'))
+                                        common_words = book_words.intersection(table_words)
+                                        score = len(common_words)
+                                        
+                                        if score > best_score:
+                                            best_score = score
+                                            best_match = table[0]
+                                    
+                                    if best_match and best_score > 0:
+                                        logger.info(f"Using best match table: {best_match} (score: {best_score})")
+                                        table_name = best_match
+                                    else:
+                                        logger.error(f"No suitable vector table found for book: {book_title}")
+                                        return []
+                            else:
+                                # If no book title context, use the first available vector table
+                                table_name = vector_tables[0][0]
+                                logger.info(f"Using first available vector table: {table_name}")
                         else:
-                            # If no book title context, use the first available vector table
-                            table_name = vector_tables[0]['table_name']
-                            logger.info(f"Using first available vector table: {table_name}")
-                    else:
-                        logger.error("No vector tables found in database")
-                        return []
-                
-                # Perform vector similarity search with proper table name quoting
-                rows = await conn.fetch(f"""
-                    SELECT content, embedding <-> $1::vector as distance
-                    FROM "{table_name.lower()}"
-                    ORDER BY embedding <-> $1::vector
-                    LIMIT $2
-                """, embedding_str, k)
-                
-                # Extract content from results
-                results = [row['content'] for row in rows if row['content']]
-                logger.info(f"Retrieved {len(results)} chunks from table '{table_name}'")
-                
-                return results
-                
+                            logger.error("No vector tables found in database")
+                            return []
+                    
+                    # Perform vector similarity search with proper table name quoting
+                    cur.execute(f"""
+                        SELECT content, embedding <-> %s::vector as distance
+                        FROM "{table_name.lower()}"
+                        ORDER BY embedding <-> %s::vector
+                        LIMIT %s
+                    """, (embedding_str, embedding_str, k))
+                    
+                    # Extract content from results
+                    results = [row[0] for row in cur.fetchall() if row[0]]
+                    logger.info(f"Retrieved {len(results)} chunks from table '{table_name}'")
+                    
+                    return results
+                    
             finally:
-                await conn.close()
+                conn.close()
                 
         except Exception as e:
             logger.error(f"Error in vector search for table '{table_name}': {e}")
@@ -1279,233 +1924,923 @@ Requirements:
             return ["General Topics"]
 
     async def _generate_questions_with_curriculum_agent(self, curriculum_name: str, exam_parameters: Dict[str, Any]) -> List[Question]:
-        """Generate questions using agent that searches entire curriculum"""
+        """
+        ENHANCED Case 1: Systematic curriculum-wide question generation
+        Following the proven 3-step methodology like Cases 2 & 3
+        """
         try:
-            logger.info(f"🌟 Creating curriculum agent for '{curriculum_name}'")
+            logger.info(f"🌟 CASE 1 ENHANCED START: Comprehensive curriculum generation for '{curriculum_name}'")
             
-            # Create curriculum question generation tool
-            curriculum_tool = self._create_curriculum_question_tool(curriculum_name, exam_parameters)
-            tools = [curriculum_tool]
+            # STEP 1: Extract comprehensive topics from entire curriculum
+            logger.info(f"🔍 STEP 1: Extracting comprehensive topics from entire curriculum")
+            curriculum_topics = await self._extract_curriculum_wide_topics(curriculum_name)
             
-            # Create agent with curriculum-specific prompt
-            current_llm = self.get_current_llm()
-            agent = create_tool_calling_agent(current_llm, tools, self.curriculum_question_prompt)
-            agent_executor = AgentExecutor(
-                agent=agent,
-                tools=tools,
-                verbose=True,
-                handle_parsing_errors=True,
-                max_iterations=3,
-                return_intermediate_steps=False
+            if not curriculum_topics:
+                logger.warning(f"⚠️ No topics extracted, using curriculum defaults")
+                curriculum_topics = self._get_curriculum_specific_topics(curriculum_name)
+            
+            logger.info(f"✅ STEP 1 DONE: Found {len(curriculum_topics)} curriculum topics: {curriculum_topics}")
+            
+            # STEP 2: Get chunks for curriculum topics across all books
+            logger.info(f"🔍 STEP 2: Getting content chunks for curriculum topics")
+            all_chunks = await self._get_chunks_for_curriculum_topics(curriculum_name, curriculum_topics)
+            
+            if not all_chunks:
+                logger.error(f"❌ STEP 2 FAILED: No chunks found for curriculum topics")
+                return self._generate_default_questions(exam_parameters, curriculum_topics)
+            
+            logger.info(f"✅ STEP 2 DONE: Retrieved {len(all_chunks)} chunks from curriculum")
+            
+            # STEP 3: Generate comprehensive questions from curriculum content
+            logger.info(f"📝 STEP 3: Generating comprehensive curriculum questions")
+            questions = await self._generate_comprehensive_curriculum_questions(
+                curriculum_name, all_chunks, curriculum_topics, exam_parameters
             )
             
-            # Execute agent to generate questions
-            logger.info("🚀 Executing curriculum question generation agent")
+            if questions and len(questions) >= exam_parameters.get('count', 5):
+                logger.info(f"✅ STEP 3 DONE: Generated {len(questions)} comprehensive questions")
+                return questions[:exam_parameters.get('count', 5)]
+            else:
+                logger.warning(f"⚠️ Insufficient questions generated, using fallback")
+                return self._generate_default_questions(exam_parameters, curriculum_topics)
+                
+        except Exception as e:
+            logger.error(f"❌ CASE 1 ENHANCED ERROR: {e}")
+            return self._generate_default_questions(exam_parameters, [curriculum_name])
+
+    async def _extract_curriculum_wide_topics(self, curriculum_name: str) -> List[str]:
+        """
+        CRITICAL: Extract comprehensive topics from entire curriculum
+        Uses multiple strategies for maximum coverage
+        """
+        try:
+            logger.info(f"🌟 STEP 1: Extracting comprehensive topics from entire curriculum '{curriculum_name}'")
             
-            # Create detailed instruction with all parameters
-            difficulty_str = ", ".join(exam_parameters['difficulty']) if isinstance(exam_parameters['difficulty'], list) else exam_parameters['difficulty']
-            types_str = ", ".join(exam_parameters['question_types']) if isinstance(exam_parameters['question_types'], list) else exam_parameters['question_types']
+            all_topics = []
             
-            detailed_instruction = f"""You must generate EXACTLY {exam_parameters['count']} exam questions for the {curriculum_name} curriculum.
-
-MANDATORY REQUIREMENTS:
-- Number of questions: EXACTLY {exam_parameters['count']} (no more, no less)
-- Difficulty level(s): {difficulty_str} (use ONLY these difficulty levels)
-- Question type(s): {types_str} (use ONLY these question types)
-- Time limit: {exam_parameters['time_limit']} minutes total
-- DO NOT mention any book names, guide titles, or document references in questions
-- Keep all questions general and concept-focused
-
-STEP 1: Call the curriculum_question_generator tool with topic "IT concepts programming databases networks" to retrieve curriculum content.
-STEP 2: Generate the required questions based on the retrieved content.
-STEP 3: Return the questions in the exact JSON format.
-
-Start by calling the curriculum_question_generator tool now."""
-
-            result = await agent_executor.ainvoke({
-                "input": detailed_instruction
-            })
+            # METHOD 1: Extract topics from all books' TOCs
+            curriculum_topics = await self._extract_topics_from_all_books_toc(curriculum_name)
+            all_topics.extend(curriculum_topics)
             
-            # Parse the result
-            return await self._parse_agent_questions_result(result['output'], exam_parameters)
+            # METHOD 2: Search for curriculum overview/syllabus content
+            overview_topics = await self._extract_topics_from_curriculum_overview(curriculum_name)
+            all_topics.extend(overview_topics)
+            
+            # METHOD 3: Content-based topic analysis across all books
+            content_topics = await self._extract_topics_from_curriculum_content(curriculum_name)
+            all_topics.extend(content_topics)
+            
+            # METHOD 4: Domain-specific topic enhancement
+            domain_topics = self._get_domain_specific_topics(curriculum_name)
+            all_topics.extend(domain_topics)
+            
+            # Deduplicate, rank, and filter to get the best topics
+            final_topics = self._deduplicate_and_rank_curriculum_topics(all_topics, curriculum_name)
+            
+            logger.info(f"✅ CURRICULUM TOPICS EXTRACTED: {len(final_topics)} comprehensive topics")
+            logger.info(f"📋 Topics: {final_topics}")
+            
+            return final_topics
             
         except Exception as e:
-            logger.error(f"❌ Error in curriculum agent: {e}")
-            # Fallback to direct generation
-            return await self._generate_questions_for_curriculum(curriculum_name, "comprehensive curriculum", exam_parameters)
+            logger.error(f"❌ Error extracting curriculum-wide topics: {e}")
+            return self._get_curriculum_specific_topics(curriculum_name)
+
+    async def _extract_topics_from_all_books_toc(self, curriculum_name: str) -> List[str]:
+        """Extract topics from table of contents of ALL books in curriculum"""
+        try:
+            logger.info(f"📚 METHOD 1: Extracting topics from all books' TOCs in '{curriculum_name}'")
+            
+            # Get all books in curriculum
+            curriculum_info = await self.db.get_curriculum_by_name(curriculum_name)
+            if not curriculum_info:
+                return []
+            
+            books = await self.db.get_books_by_curriculum(curriculum_info['id'])
+            logger.info(f"📖 Found {len(books)} books in curriculum '{curriculum_name}'")
+            
+            all_book_topics = []
+            
+            for book in books:
+                book_title = book['title']
+                logger.info(f"📄 Extracting topics from book: {book_title}")
+                
+                # Use existing TOC extraction method for each book
+                book_topics = await self._extract_book_topics(curriculum_name, book_title)
+                if book_topics:
+                    all_book_topics.extend(book_topics)
+                    logger.info(f"✅ Extracted {len(book_topics)} topics from '{book_title}'")
+            
+            logger.info(f"📚 TOC METHOD: Total {len(all_book_topics)} topics from all books")
+            return all_book_topics
+            
+        except Exception as e:
+            logger.error(f"❌ Error extracting topics from all books' TOCs: {e}")
+            return []
+
+    async def _extract_topics_from_curriculum_overview(self, curriculum_name: str) -> List[str]:
+        """Search for and analyze curriculum overview, syllabus, or course outline"""
+        try:
+            logger.info(f"📋 METHOD 2: Searching for curriculum overview content")
+            
+            # Search for curriculum-level overview content
+            overview_queries = [
+                "curriculum overview syllabus course outline",
+                "program structure learning objectives",
+                "course description main topics areas",
+                "curriculum framework key subjects",
+                "study plan academic program overview"
+            ]
+            
+            overview_chunks = []
+            for query in overview_queries:
+                chunks = await self._search_curriculum_embeddings(curriculum_name, query, k=5)
+                if chunks:
+                    overview_chunks.extend(chunks)
+                    logger.info(f"✅ Found {len(chunks)} chunks for overview query: '{query}'")
+            
+            if not overview_chunks:
+                logger.warning("⚠️ No curriculum overview content found")
+                return []
+            
+            # Extract topics from overview content using LLM
+            overview_content = "\n\n".join([chunk['content'] for chunk in overview_chunks[:10]])
+            topics = await self._extract_topics_from_overview_content(overview_content, curriculum_name)
+            
+            logger.info(f"📋 OVERVIEW METHOD: Extracted {len(topics)} topics from curriculum overview")
+            return topics
+            
+        except Exception as e:
+            logger.error(f"❌ Error extracting topics from curriculum overview: {e}")
+            return []
+
+    async def _extract_topics_from_curriculum_content(self, curriculum_name: str) -> List[str]:
+        """Analyze content across all books to extract major themes and topics"""
+        try:
+            logger.info(f"📊 METHOD 3: Content analysis across entire curriculum")
+            
+            # Get diverse content samples from across the curriculum
+            content_queries = [
+                "introduction fundamentals principles",
+                "advanced topics concepts methods",
+                "practical applications examples",
+                "key theories important concepts",
+                "main subjects core areas"
+            ]
+            
+            all_content = []
+            for query in content_queries:
+                chunks = await self._search_curriculum_embeddings(curriculum_name, query, k=8)
+                if chunks:
+                    all_content.extend([chunk['content'] for chunk in chunks])
+            
+            if not all_content:
+                logger.warning("⚠️ No content found for analysis")
+                return []
+            
+            # Use LLM to analyze content and extract major topics
+            combined_content = "\n\n".join(all_content[:15])  # Limit to prevent overflow
+            topics = await self._analyze_content_for_topics(combined_content, curriculum_name)
+            
+            logger.info(f"📊 CONTENT METHOD: Extracted {len(topics)} topics from content analysis")
+            return topics
+            
+        except Exception as e:
+            logger.error(f"❌ Error extracting topics from curriculum content: {e}")
+            return []
+
+    async def _extract_topics_from_overview_content(self, overview_content: str, curriculum_name: str) -> List[str]:
+        """Extract topics from curriculum overview content using LLM"""
+        try:
+            logger.info(f"🔍 Analyzing overview content for curriculum topics")
+            
+            topic_extraction_prompt = ChatPromptTemplate.from_messages([
+                ("system", f"""You are an expert curriculum analyzer. Extract comprehensive academic topics from the provided curriculum overview content.
+
+REQUIREMENTS:
+- Extract 10-15 major academic topics/subjects from the content
+- Focus on specific subject areas, not general concepts
+- Return topics that would appear in an academic curriculum
+- Use clear, professional terminology
+- Each topic should be 2-6 words
+
+CURRICULUM TYPE: {curriculum_name}
+
+Return ONLY a JSON array of topic strings, no explanations:
+["Topic 1", "Topic 2", "Topic 3", ...]"""),
+                ("human", "Extract major academic topics from this curriculum overview content:\n\n{content}")
+            ])
+            
+            chain = topic_extraction_prompt | self.get_current_llm() | StrOutputParser()
+            result = await chain.ainvoke({
+                "content": overview_content[:4000],  # Limit content size
+                "curriculum_name": curriculum_name
+            })
+            
+            # Parse JSON response
+            topics = self._parse_topics_from_llm_response(result)
+            logger.info(f"✅ Extracted {len(topics)} topics from overview content")
+            return topics
+            
+        except Exception as e:
+            logger.error(f"❌ Error extracting topics from overview content: {e}")
+            return []
+
+    async def _analyze_content_for_topics(self, content: str, curriculum_name: str) -> List[str]:
+        """Analyze curriculum content to extract major topics and themes"""
+        try:
+            logger.info(f"🔍 Analyzing curriculum content for major topics")
+            
+            topic_analysis_prompt = ChatPromptTemplate.from_messages([
+                ("system", f"""You are an expert content analyzer. Analyze the provided curriculum content and extract the main academic topics and subject areas.
+
+REQUIREMENTS:
+- Extract 8-12 major topics/themes from the content
+- Focus on specific subject areas and key concepts
+- Use professional academic terminology
+- Each topic should be 2-6 words
+- Prioritize topics that appear frequently or are emphasized
+
+CURRICULUM TYPE: {curriculum_name}
+
+Return ONLY a JSON array of topic strings:
+["Topic 1", "Topic 2", "Topic 3", ...]"""),
+                ("human", "Analyze this curriculum content and extract major academic topics:\n\n{content}")
+            ])
+            
+            chain = topic_analysis_prompt | self.get_current_llm() | StrOutputParser()
+            result = await chain.ainvoke({
+                "content": content[:5000],  # Limit content size
+                "curriculum_name": curriculum_name
+            })
+            
+            # Parse JSON response
+            topics = self._parse_topics_from_llm_response(result)
+            logger.info(f"✅ Extracted {len(topics)} topics from content analysis")
+            return topics
+            
+        except Exception as e:
+            logger.error(f"❌ Error analyzing content for topics: {e}")
+            return []
+
+    def _get_domain_specific_topics(self, curriculum_name: str) -> List[str]:
+        """Get domain-specific topics based on curriculum type"""
+        try:
+            logger.info(f"🏗️ METHOD 4: Adding domain-specific topics for '{curriculum_name}'")
+            
+            domain_topics = {
+                'law': [
+                    "constitutional law", "contract law", "criminal law", "tort law",
+                    "property law", "administrative law", "civil procedure", 
+                    "legal ethics", "evidence law", "family law"
+                ],
+                'medical': [
+                    "anatomy and physiology", "pathology", "pharmacology", "clinical medicine",
+                    "medical diagnosis", "surgical procedures", "medical ethics",
+                    "patient care", "medical imaging", "emergency medicine"
+                ],
+                'it': [
+                    "software engineering", "database systems", "network security", 
+                    "data structures", "algorithms", "system architecture",
+                    "web development", "cloud computing", "artificial intelligence",
+                    "cybersecurity", "data engineering", "mobile development"
+                ]
+            }
+            
+            # Get normalized curriculum type
+            curriculum_type = next(
+                (k for k in domain_topics.keys() if k in curriculum_name.lower()),
+                'general'
+            )
+            
+            if curriculum_type in domain_topics:
+                topics = domain_topics[curriculum_type]
+                logger.info(f"✅ Added {len(topics)} domain-specific topics for {curriculum_type}")
+                return topics
+            
+            return []
+            
+        except Exception as e:
+            logger.error(f"❌ Error getting domain-specific topics: {e}")
+            return []
+
+    def _deduplicate_and_rank_curriculum_topics(self, all_topics: List[str], curriculum_name: str) -> List[str]:
+        """Smart deduplication and ranking of curriculum topics"""
+        try:
+            import re
+            from collections import Counter
+            
+            logger.info(f"🔧 Deduplicating and ranking {len(all_topics)} topics")
+            
+            # Normalize topics for comparison
+            normalized_topics = {}
+            for topic in all_topics:
+                if topic and len(topic.strip()) > 2:
+                    # Normalize: lowercase, remove extra spaces, basic cleanup
+                    normalized = re.sub(r'\s+', ' ', topic.lower().strip())
+                    normalized = re.sub(r'[^\w\s-]', '', normalized)
+                    
+                    if len(normalized) > 3:  # Minimum topic length
+                        normalized_topics[normalized] = topic
+            
+            # Count frequency of normalized topics
+            topic_counts = Counter(normalized_topics.keys())
+            
+            # Get top topics by frequency
+            top_topics = []
+            for normalized_topic, count in topic_counts.most_common(20):
+                if len(top_topics) < 15:  # Limit to 15 topics
+                    original_topic = normalized_topics[normalized_topic]
+                    top_topics.append(original_topic)
+            
+            # Ensure we have at least some topics
+            if not top_topics:
+                top_topics = self._get_curriculum_specific_topics(curriculum_name)[:10]
+            
+            logger.info(f"✅ Final topics after deduplication: {len(top_topics)}")
+            return top_topics
+            
+        except Exception as e:
+            logger.error(f"❌ Error deduplicating topics: {e}")
+            return all_topics[:15] if all_topics else []
+
+    async def _get_chunks_for_curriculum_topics(self, curriculum_name: str, topics: List[str]) -> List[Dict[str, Any]]:
+        """Get content chunks for curriculum topics across all books"""
+        try:
+            logger.info(f"🔍 Getting chunks for {len(topics)} curriculum topics")
+            
+            all_chunks = []
+            
+            for i, topic in enumerate(topics[:10]):  # Limit to prevent overload
+                logger.info(f"📄 STEP 2.{i+1}: Getting chunks for '{topic[:30]}...'")
+                
+                # Search for chunks related to this topic
+                chunks = await self._search_curriculum_embeddings(curriculum_name, topic, k=3)
+                if chunks:
+                    all_chunks.extend(chunks)
+                    logger.info(f"✅ Found {len(chunks)} chunks for '{topic[:30]}...'")
+            
+            # Remove duplicates based on content
+            unique_chunks = []
+            seen_content = set()
+            
+            for chunk in all_chunks:
+                content_hash = hash(chunk['content'][:100])
+                if content_hash not in seen_content:
+                    unique_chunks.append(chunk)
+                    seen_content.add(content_hash)
+            
+            logger.info(f"✅ Retrieved {len(unique_chunks)} unique chunks from curriculum")
+            return unique_chunks
+            
+        except Exception as e:
+            logger.error(f"❌ Error getting chunks for curriculum topics: {e}")
+            return []
+
+    async def _generate_comprehensive_curriculum_questions(self, curriculum_name: str, chunks: List[Dict[str, Any]], topics: List[str], exam_parameters: Dict[str, Any]) -> List[Question]:
+        """Generate comprehensive questions from curriculum content"""
+        try:
+            logger.info(f"📝 Generating comprehensive questions from {len(chunks)} curriculum chunks")
+            
+            # Combine chunks into comprehensive content
+            combined_content = "\n\n".join([chunk['content'] for chunk in chunks])
+            topics_str = ", ".join(topics[:8])  # Use first 8 topics
+            
+            # Generate questions using existing method
+            questions = await self._generate_questions_from_content(
+                content=combined_content,
+                topic=f"{curriculum_name} curriculum covering: {topics_str}",
+                exam_parameters=exam_parameters
+            )
+            
+            logger.info(f"✅ Generated {len(questions)} comprehensive curriculum questions")
+            return questions
+            
+        except Exception as e:
+            logger.error(f"❌ Error generating comprehensive curriculum questions: {e}")
+            return []
+
+    def _parse_topics_from_llm_response(self, llm_response: str) -> List[str]:
+        """Parse topics from LLM response (JSON array format)"""
+        try:
+            import json
+            import re
+            
+            # Clean the response
+            cleaned_response = llm_response.strip()
+            
+            # Remove markdown formatting
+            if cleaned_response.startswith('```json'):
+                cleaned_response = cleaned_response.replace('```json\n', '').replace('```json', '').replace('\n```', '').replace('```', '')
+            elif cleaned_response.startswith('```'):
+                cleaned_response = cleaned_response.replace('```\n', '').replace('```', '')
+            
+            # Find JSON array
+            start_idx = cleaned_response.find('[')
+            end_idx = cleaned_response.rfind(']')
+            
+            if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                json_str = cleaned_response[start_idx:end_idx+1]
+                topics = json.loads(json_str)
+                
+                # Filter and clean topics
+                clean_topics = []
+                for topic in topics:
+                    if isinstance(topic, str) and len(topic.strip()) > 2:
+                        clean_topic = topic.strip()
+                        if len(clean_topic) <= 100:  # Reasonable length limit
+                            clean_topics.append(clean_topic)
+                
+                logger.info(f"✅ Parsed {len(clean_topics)} topics from LLM response")
+                return clean_topics
+            
+            # Fallback: try to extract topics from text
+            lines = cleaned_response.split('\n')
+            topics = []
+            for line in lines:
+                line = line.strip()
+                if line and not line.startswith('#') and len(line) > 2 and len(line) < 100:
+                    # Remove quotes and clean up
+                    clean_line = re.sub(r'^["\'\-\*\d\.\s]+', '', line)
+                    clean_line = re.sub(r'["\'\,\s]+$', '', clean_line)
+                    if clean_line:
+                        topics.append(clean_line)
+            
+            return topics[:15]  # Limit to reasonable number
+            
+        except Exception as e:
+            logger.error(f"❌ Error parsing topics from LLM response: {e}")
+            return []
 
     async def _generate_questions_with_book_agent(self, book_title: str, curriculum_name: str, exam_parameters: Dict[str, Any]) -> List[Question]:
-        """Generate questions using agent that searches specific book in curriculum"""
+        """Case 2: Generate questions for whole book using simplified direct approach"""
         try:
-            logger.info(f"📚 Creating book agent for '{book_title}' in curriculum '{curriculum_name}'")
+            logger.info(f"📚 CASE 2 START: '{book_title}' in curriculum '{curriculum_name}'")
             
-            # Create book question generation tool
-            book_tool = self._create_book_question_tool(book_title, curriculum_name, exam_parameters)
-            tools = [book_tool]
+            # STEP 1: Extract topics from book content
+            logger.info(f"🔍 STEP 1: Extracting topics from book")
+            topics = await self._extract_book_topics(curriculum_name, book_title)
             
-            # Create agent with book-specific prompt
-            current_llm = self.get_current_llm()
-            agent = create_tool_calling_agent(current_llm, tools, self.book_question_prompt)
-            agent_executor = AgentExecutor(
-                agent=agent,
-                tools=tools,
-                verbose=True,
-                handle_parsing_errors=True,
-                max_iterations=3,
-                return_intermediate_steps=False
+            if not topics:
+                logger.warning(f"⚠️ No topics extracted, using curriculum defaults")
+                topics = self._get_curriculum_specific_topics(curriculum_name)
+            
+            logger.info(f"✅ STEP 1 DONE: Found topics: {', '.join(topics[:5])}...")
+            
+            # STEP 2: Get chunks for topics (with safe connection handling)
+            logger.info(f"🔍 STEP 2: Getting content chunks for topics")
+            all_chunks = []
+            
+            # Get book info once
+            book_info = None
+            try:
+                book_info = await self._get_book_curriculum_info(book_title)
+                if book_info:
+                    actual_curriculum = book_info.get('curriculum_name', curriculum_name)
+                    book_id = book_info.get('id')
+                    logger.info(f"📚 Book found: ID={book_id}, curriculum='{actual_curriculum}'")
+                else:
+                    logger.warning(f"⚠️ Book '{book_title}' not found in database")
+            except Exception as e:
+                logger.warning(f"⚠️ Error getting book info: {e}")
+            
+            # Try to get chunks for each topic
+            for i, topic in enumerate(topics[:6], 1):  # Limit to 6 topics
+                try:
+                    logger.info(f"📄 STEP 2.{i}: Getting chunks for '{topic[:30]}...'")
+                    
+                    if book_info:
+                        # Try book-specific search first
+                        chunks = await self._search_book_embeddings(actual_curriculum, book_title, topic, k=3)
+                    else:
+                        # Fallback to curriculum search
+                        chunks = await self._search_curriculum_embeddings(curriculum_name, topic, k=3)
+                    
+                    if chunks:
+                        logger.info(f"✅ Found {len(chunks)} chunks for '{topic[:30]}...'")
+                        all_chunks.extend(chunks)
+                    else:
+                        logger.info(f"⚠️ No chunks for '{topic[:30]}...'")
+                        
+                except Exception as e:
+                    logger.warning(f"⚠️ Error getting chunks for '{topic}': {e}")
+                    continue
+            
+            if not all_chunks:
+                logger.error(f"❌ STEP 2 FAILED: No chunks found for any topics")
+                return self._generate_default_questions(exam_parameters, topics)
+            
+            logger.info(f"✅ STEP 2 DONE: Retrieved {len(all_chunks)} total chunks")
+            
+            # STEP 3: Generate questions from real content (direct, no agent)
+            logger.info(f"� STEP 3: Generating questions from real content")
+            
+            combined_content = "\n\n".join([chunk.get('content', '') for chunk in all_chunks])
+            content_length = len(combined_content)
+            
+            if content_length < 100:
+                logger.warning(f"⚠️ Very little content ({content_length} chars), falling back to defaults")
+                return self._generate_default_questions(exam_parameters, topics)
+            
+            logger.info(f"📝 Using {content_length} characters of real content")
+            
+            # Generate questions directly from content
+            questions = await self._generate_questions_from_content(
+                content=combined_content[:8000],  # Limit to avoid token limits
+                topic=f"{book_title} content covering: {', '.join(topics[:3])}",
+                exam_parameters=exam_parameters
             )
             
-            # Execute agent to generate questions
-            logger.info("🚀 Executing book question generation agent")
-            logger.info(f"📋 Agent will use book_question_generator tool to search for content from '{book_title}'")
-            
-            # Create detailed instruction with all parameters
-            difficulty_str = ", ".join(exam_parameters['difficulty']) if isinstance(exam_parameters['difficulty'], list) else exam_parameters['difficulty']
-            types_str = ", ".join(exam_parameters['question_types']) if isinstance(exam_parameters['question_types'], list) else exam_parameters['question_types']
-            
-            detailed_instruction = f"""You must generate EXACTLY {exam_parameters['count']} exam questions from the book content.
-
-MANDATORY REQUIREMENTS:
-- Number of questions: EXACTLY {exam_parameters['count']} (no more, no less)
-- Difficulty level(s): {difficulty_str} (use ONLY these difficulty levels)
-- Question type(s): {types_str} (use ONLY these question types)
-- Time limit: {exam_parameters['time_limit']} minutes total
-- Focus on: {book_title} content within {curriculum_name} curriculum
-- DO NOT mention the book name '{book_title}' or any guide titles in questions
-- Keep all questions general and concept-focused
-
-STEP 1: Call the book_question_generator tool with topic "data lakehouse architecture configuration storage" to retrieve book content.
-STEP 2: Generate the required questions based on the retrieved content.
-STEP 3: Return the questions in the exact JSON format.
-
-Start by calling the book_question_generator tool now."""
-
-            result = await agent_executor.ainvoke({
-                "input": detailed_instruction
-            })
-            
-            # Parse the result
-            return await self._parse_agent_questions_result(result['output'], exam_parameters)
+            if questions and len(questions) >= exam_parameters.get('count', 5):
+                logger.info(f"✅ STEP 3 DONE: Generated {len(questions)} questions from real content")
+                return questions[:exam_parameters.get('count', 5)]
+            else:
+                logger.warning(f"⚠️ STEP 3 PARTIAL: Only got {len(questions) if questions else 0} questions")
+                
+                # If we have some questions but not enough, supplement with defaults
+                if questions:
+                    needed = exam_parameters.get('count', 5) - len(questions)
+                    defaults = self._generate_default_questions({'count': needed, **exam_parameters}, topics)
+                    return questions + defaults
+                else:
+                    return self._generate_default_questions(exam_parameters, topics)
             
         except Exception as e:
-            logger.error(f"❌ Error in book agent: {e}")
-            # Fallback to direct generation
-            return await self._generate_questions_for_topic(book_title, "comprehensive book content", exam_parameters)
+            logger.error(f"❌ CASE 2 ERROR: {e}")
+            import traceback
+            logger.error(f"❌ TRACEBACK: {traceback.format_exc()}")
+            return self._generate_default_questions(exam_parameters, [curriculum_name])
 
     async def _generate_questions_with_topic_agent(self, book_title: str, curriculum_name: str, specific_topics: str, exam_parameters: Dict[str, Any]) -> List[Question]:
-        """Generate questions using agent that searches specific topics in book"""
+        """Generate questions by directly retrieving chunks for specific topics and creating questions"""
+        logger.info(f"🎯 DIRECT TOPIC SEARCH: Generating questions for topics '{specific_topics}' in book '{book_title}'")
+        
         try:
-            logger.info(f"🎯 Creating topic agent for topics '{specific_topics}' in book '{book_title}'")
+            # Step 1: Enhanced book information retrieval with fallback
+            logger.info(f"🔍 STEP 1: Looking up book information for '{book_title}'")
+            book_info = await self._get_book_curriculum_info(book_title)
             
-            # Create topic question generation tool
-            topic_tool = self._create_topic_question_tool(book_title, curriculum_name, specific_topics, exam_parameters)
-            tools = [topic_tool]
+            if not book_info:
+                logger.warning(f"⚠️ Book '{book_title}' not found in database, trying curriculum-wide search")
+                # Fallback: Search entire curriculum instead of specific book
+                chunks = await self._search_curriculum_embeddings(curriculum_name, specific_topics, k=8)
+                if chunks:
+                    logger.info(f"✅ FALLBACK SUCCESS: Found {len(chunks)} chunks from curriculum '{curriculum_name}'")
+                else:
+                    logger.error(f"❌ No content found in curriculum '{curriculum_name}' for topics '{specific_topics}'")
+                    return self._generate_default_questions(exam_parameters, [specific_topics])
+            else:
+                actual_curriculum = book_info.get('curriculum_name', curriculum_name)
+                book_id = book_info.get('id')
+                logger.info(f"✅ BOOK FOUND: ID={book_id}, curriculum='{actual_curriculum}'")
+                
+                # Step 2: Enhanced search with detailed logging
+                logger.info(f"🔍 STEP 2: Searching for content on '{specific_topics}' in book '{book_title}'")
+                
+                # Create enhanced search query
+                search_query = specific_topics.replace(',', ' ')
+                logger.info(f"📝 Using search query: '{search_query}'")
+                
+                # Search specifically in this book for the topics
+                chunks = await self._search_book_embeddings(actual_curriculum, book_title, search_query, k=8)
+                
+                if not chunks:
+                    logger.warning(f"⚠️ No chunks from book '{book_title}', trying curriculum-wide search")
+                    chunks = await self._search_curriculum_embeddings(actual_curriculum, search_query, k=8)
+                    if chunks:
+                        logger.info(f"✅ CURRICULUM FALLBACK: Found {len(chunks)} chunks from curriculum '{actual_curriculum}'")
             
-            # Create agent with topic-specific prompt
-            current_llm = self.get_current_llm()
-            try:
-                agent = create_tool_calling_agent(current_llm, tools, self.topic_question_prompt)
-                agent_executor = AgentExecutor(
-                    agent=agent,
-                    tools=tools,
-                    verbose=True,
-                    handle_parsing_errors=True,
-                    max_iterations=3,
-                    return_intermediate_steps=False
-                )
-            except Exception as e:
-                logger.error(f"❌ Error creating topic agent: {e}")
-                raise
+            # Verify we have chunks
+            if not chunks:
+                logger.error(f"❌ NO CHUNKS FOUND: Could not retrieve any content for topics '{specific_topics}'")
+                return self._generate_default_questions(exam_parameters, [specific_topics])
             
-            # Execute agent to generate questions
-            logger.info("🚀 Executing topic question generation agent")
+            # Step 3: Log chunk details for verification
+            logger.info(f"✅ CHUNKS RETRIEVED: Found {len(chunks)} relevant chunks for topics '{specific_topics}'")
+            for i, chunk in enumerate(chunks[:3]):  # Log first 3 chunks
+                content_preview = chunk.get('content', '')[:150] + "..." if len(chunk.get('content', '')) > 150 else chunk.get('content', '')
+                logger.info(f"📄 CHUNK {i+1}: {content_preview}")
             
-            # Create detailed instruction with all parameters
-            difficulty_str = ", ".join(exam_parameters['difficulty']) if isinstance(exam_parameters['difficulty'], list) else exam_parameters['difficulty']
-            types_str = ", ".join(exam_parameters['question_types']) if isinstance(exam_parameters['question_types'], list) else exam_parameters['question_types']
+            # Step 4: Combine content and generate questions
+            combined_content = "\n\n".join([chunk['content'] for chunk in chunks])
+            logger.info(f"📝 COMBINED CONTENT: {len(combined_content)} characters total")
             
-            detailed_instruction = f"""You must generate EXACTLY {exam_parameters['count']} exam questions on the specific topics.
-
-MANDATORY REQUIREMENTS:
-- Number of questions: EXACTLY {exam_parameters['count']} (no more, no less)  
-- Difficulty level(s): {difficulty_str} (use ONLY these difficulty levels)
-- Question type(s): {types_str} (use ONLY these question types)
-- Time limit: {exam_parameters['time_limit']} minutes total
-- Focus on topics: {specific_topics}
-- Context: From book '{book_title}' in {curriculum_name} curriculum
-- DO NOT mention the book name '{book_title}' or any guide titles in questions
-- Keep all questions general and concept-focused
-
-STEP 1: Call the topic_question_generator tool with topic "{specific_topics}" to retrieve relevant content.
-STEP 2: Generate the required questions based on the retrieved content.
-STEP 3: Return the questions in the exact JSON format.
-
-Start by calling the topic_question_generator tool now."""
-
-            result = await agent_executor.ainvoke({
-                "input": detailed_instruction
-            })
+            if len(combined_content) < 100:
+                logger.warning(f"⚠️ Very short content ({len(combined_content)} chars), may not generate good questions")
             
-            # Parse the result
-            return await self._parse_agent_questions_result(result['output'], exam_parameters)
+            # Create questions using the content
+            logger.info(f"🎯 STEP 3: Generating {exam_parameters['count']} questions from retrieved content")
+            questions = await self._generate_questions_from_content(
+                content=combined_content,
+                topic=specific_topics,
+                exam_parameters=exam_parameters
+            )
+            
+            if questions and len(questions) >= exam_parameters['count']:
+                logger.info(f"✅ SUCCESS: Generated {len(questions)} questions from actual content for '{specific_topics}'")
+                return questions[:exam_parameters['count']]  # Return exact count requested
+            else:
+                logger.warning(f"⚠️ GENERATION FAILED: Expected {exam_parameters['count']}, got {len(questions) if questions else 0}")
+                logger.warning(f"🔄 Falling back to default questions")
+                return self._generate_default_questions(exam_parameters, [specific_topics])
             
         except Exception as e:
-            logger.error(f"❌ Error in topic agent: {e}")
-            # Fallback to direct generation
-            exam_parameters['specific_topics'] = specific_topics
-            return await self._generate_questions_for_topic(book_title, specific_topics, exam_parameters)
+            logger.error(f"❌ ERROR in direct topic question generation: {e}")
+            import traceback
+            logger.error(f"❌ TRACEBACK: {traceback.format_exc()}")
+            return self._generate_default_questions(exam_parameters, [specific_topics])
 
-    async def _parse_agent_questions_result(self, agent_output: str, exam_parameters: Dict[str, Any]) -> List[Question]:
-        """Parse agent output and convert to Question objects"""
+    async def _generate_questions_from_content(self, content: str, topic: str, exam_parameters: Dict[str, Any]) -> List[Question]:
+        """Generate questions directly from content without using agents"""
         try:
-            logger.info(f"🔍 Parsing agent output: {agent_output[:500]}...")
-            logger.info(f"🔍 Full agent output length: {len(agent_output)} characters")
+            logger.info(f"📝 DIRECT GENERATION: Creating {exam_parameters['count']} questions about '{topic}' from {len(content)} chars of content")
             
-            # Log the complete output if it's short (likely empty or error)
-            if len(agent_output) < 100:
-                logger.warning(f"⚠️ Agent output is very short: '{agent_output}'")
+            # Validate content is not empty
+            if not content or len(content.strip()) < 50:
+                logger.error(f"❌ Content too short ({len(content)} chars) or empty, cannot generate quality questions")
+                return []
+            
+            # Log content preview for verification
+            content_preview = content[:300] + "..." if len(content) > 300 else content
+            logger.info(f"📄 CONTENT PREVIEW: {content_preview}")
+            
+            # Prepare parameters
+            difficulty = exam_parameters.get('difficulty', ['medium'])[0]
+            question_type = exam_parameters.get('question_types', ['multiple_choice_single_answer'])[0]
+            count = exam_parameters.get('count', 10)
+            
+            logger.info(f"🎯 GENERATION PARAMS: {count} questions, difficulty={difficulty}, type={question_type}")
+            
+            # IMPROVED PROMPT - More explicit about forbidden phrases
+            question_prompt = ChatPromptTemplate.from_messages([
+                ("system", f"""You are a professional exam creator. Generate EXACTLY {count} technical exam questions based ONLY on the provided content.
+
+CRITICAL REQUIREMENTS:
+- Generate EXACTLY {count} questions
+- Difficulty: {difficulty}
+- Question Type: {question_type}
+- Base questions ONLY on the provided content
+
+STRICTLY FORBIDDEN PHRASES - DO NOT USE:
+❌ "According to the content"
+❌ "According to the text" 
+❌ "As described in Chapter X"
+❌ "What does Chapter X cover"
+❌ "Chapter X primarily covers"
+❌ "As mentioned in the book"
+❌ "The course book states"
+❌ "Based on the provided content"
+❌ "Referencing the material"
+❌ "As stated in"
+❌ "According to"
+❌ "The text mentions"
+❌ "The content describes"
+
+REQUIRED QUESTION STYLE:
+✅ Write direct technical questions about concepts
+✅ Ask about processes, tools, and techniques directly
+✅ Use straightforward professional language
+✅ Make questions sound like certification exams
+
+GOOD EXAMPLES:
+✅ "What is the primary role of data engineers?"
+✅ "Which Python library is best for data manipulation?"
+✅ "What are the main stages of ETL processing?"
+✅ "Which tool is used for big data processing?"
+
+BAD EXAMPLES (DO NOT USE):
+❌ "According to the content, what is the primary role of data engineers?"
+❌ "What does Chapter 2 primarily cover?"
+❌ "As described in the text, which library..."
+
+JSON FORMAT:
+Return a JSON array with {count} question objects:
+- "difficulty": "{difficulty}"
+- "type": "{question_type}"  
+- "question_text": "Direct technical question (NO source references)"
+- "options": ["Option A", "Option B", "Option C", "Option D"] (for multiple choice)
+- "answer": "Correct answer from options"
+
+Focus on technical concepts from the content but write questions like a professional certification exam."""),
+                ("human", """Content to analyze:
+{content}
+
+Generate {count} {difficulty} {question_type} questions about data engineering concepts. 
+
+REMEMBER: Write direct technical questions WITHOUT any references to "content", "text", "book", "chapter", etc. Make them sound professional and exam-appropriate.
+
+Return ONLY the JSON array, no additional text or formatting.""")
+            ])
+            
+            chain = question_prompt | self.get_current_llm() | StrOutputParser()
+            
+            logger.info(f"🚀 SENDING TO LLM: Generating {count} questions from content")
+            result = await chain.ainvoke({
+                "topic": topic,
+                "content": content,
+                "count": count,
+                "difficulty": difficulty,
+                "question_type": question_type
+            })
+            
+            logger.info(f"🔍 LLM Response received: {len(result)} characters")
+            logger.info(f"🔍 LLM Response preview: {result[:200]}...")
+            
+            # Parse the JSON response with enhanced error handling
+            try:
+                # Clean the response more thoroughly
+                cleaned_result = result.strip()
+                
+                # Remove common markdown formatting
+                if cleaned_result.startswith('```json'):
+                    cleaned_result = cleaned_result.replace('```json\n', '').replace('```json', '').replace('\n```', '').replace('```', '')
+                elif cleaned_result.startswith('```'):
+                    cleaned_result = cleaned_result.replace('```\n', '').replace('```', '')
+                
+                # Remove any trailing text after the JSON
+                if '```' in cleaned_result:
+                    cleaned_result = cleaned_result.split('```')[0]
+                
+                # Try to find JSON array boundaries
+                start_idx = cleaned_result.find('[')
+                end_idx = cleaned_result.rfind(']')
+                
+                if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                    cleaned_result = cleaned_result[start_idx:end_idx+1]
+                
+                logger.info(f"🧹 CLEANED JSON: {cleaned_result[:200]}...")
+                
+                questions_data = json.loads(cleaned_result)
+                
+                if not isinstance(questions_data, list):
+                    logger.error("❌ Response is not a JSON array")
+                    return []
+                
+                logger.info(f"✅ JSON PARSED: Found {len(questions_data)} question objects")
+                
+                # Convert to Question objects with validation
+                questions = []
+                for i, q_data in enumerate(questions_data):
+                    if not isinstance(q_data, dict):
+                        logger.warning(f"⚠️ Question {i+1} is not a dict, skipping")
+                        continue
+                    
+                    # Validate required fields
+                    if not q_data.get('question_text'):
+                        logger.warning(f"⚠️ Question {i+1} missing question_text, skipping")
+                        continue
+                    
+                    # Clean the question text to remove unwanted references
+                    question_text = q_data.get('question_text', '')
+                    question_text = self._remove_book_references(question_text)
+                    
+                    question = Question(
+                        difficulty=q_data.get('difficulty', difficulty),
+                        type=q_data.get('type', question_type),
+                        question_text=question_text,
+                        options=q_data.get('options', []),
+                        answer=str(q_data.get('answer', ''))
+                    )
+                    questions.append(question)
+                    logger.info(f"✅ Question {i+1}: {question.question_text[:100]}...")
+                
+                if len(questions) == count:
+                    logger.info(f"🎉 SUCCESS: Generated exactly {len(questions)} questions from content")
+                elif len(questions) > 0:
+                    logger.warning(f"⚠️ Generated {len(questions)} questions, expected {count}")
+                else:
+                    logger.error("❌ No valid questions generated")
+                
+                return questions[:count]  # Ensure we don't exceed the requested count
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"❌ JSON parsing error: {e}")
+                logger.error(f"❌ Raw response that failed to parse: {result}")
+                return []
+            
+        except Exception as e:
+            logger.error(f"❌ Error generating questions from content: {e}")
+            import traceback
+            logger.error(f"❌ TRACEBACK: {traceback.format_exc()}")
+            return []
+            
+    async def _parse_agent_questions_result(self, agent_output: str, exam_parameters: Dict[str, Any]) -> List[Question]:
+        """Parse agent output and convert to Question objects with robust error handling"""
+        try:
+            # Initialize empty list for questions
+            questions = []
+            
+            if not agent_output:
+                logger.error("❌ Empty agent output")
+                # Return default questions since we have no output
+                return self._generate_default_questions(exam_parameters, ["general knowledge"])
+            
+            logger.info(f"🔍 Parsing agent output: {agent_output[:200]}...")
             
             # Clean the output to extract JSON
             cleaned_output = agent_output.strip()
+            json_content = None
+            
+            # Try multiple JSON extraction methods
             if '```json' in cleaned_output:
+                # Extract from markdown code block
                 start = cleaned_output.find('```json') + 7
                 end = cleaned_output.find('```', start)
                 if end != -1:
-                    cleaned_output = cleaned_output[start:end].strip()
+                    json_content = cleaned_output[start:end].strip()
+            elif '```' in cleaned_output:
+                # Try other code blocks
+                start = cleaned_output.find('```') + 3
+                end = cleaned_output.find('```', start)
+                if end != -1:
+                    json_content = cleaned_output[start:end].strip()
             elif '[' in cleaned_output and ']' in cleaned_output:
+                # Extract array directly
                 start = cleaned_output.find('[')
                 end = cleaned_output.rfind(']') + 1
-                cleaned_output = cleaned_output[start:end]
+                json_content = cleaned_output[start:end]
+            else:
+                # Try to find any JSON-like content
+                import re
+                json_matches = re.findall(r'\[.*?\]', cleaned_output, re.DOTALL)
+                if json_matches:
+                    json_content = json_matches[0]
+                    
+            if not json_content:
+                logger.error("❌ Could not extract JSON content from agent output")
+                logger.debug(f"Raw output: {agent_output}")
+                return self._generate_default_questions(exam_parameters, ["general knowledge"])
             
-            # Parse JSON
-            questions_data = json.loads(cleaned_output)
+            if not json_content:
+                logger.error("❌ No valid JSON content found in agent output")
+                return []
+            
+            # Parse JSON with error handling
+            try:
+                questions_data = json.loads(json_content)
+            except json.JSONDecodeError as e:
+                logger.error(f"❌ JSON parsing error: {e}")
+                return []
+            
             if not isinstance(questions_data, list):
-                raise ValueError("Agent output is not a list of questions")
+                logger.error("❌ Parsed content is not a list")
+                return []
             
-            # Convert to Question objects
+            # Convert to Question objects with validation
             questions = []
             for q_data in questions_data:
-                # Ensure answer is string
-                answer_value = q_data.get('answer', '')
-                if isinstance(answer_value, bool):
-                    answer_str = str(answer_value)
-                else:
-                    answer_str = str(answer_value) if answer_value is not None else ''
-                
-                question = Question(
-                    difficulty=q_data.get('difficulty', 'medium'),
-                    type=q_data.get('type', 'multiple_choice_single_answer'),
-                    question_text=q_data.get('question_text', ''),
-                    options=q_data.get('options', []),
-                    answer=answer_str
-                )
-                questions.append(question)
+                try:
+                    if not isinstance(q_data, dict):
+                        continue
+                        
+                    # Validate required fields
+                    question_text = q_data.get('question_text', '').strip()
+                    if not question_text:
+                        continue
+                    
+                    # Get question type with validation
+                    q_type = q_data.get('type', '')
+                    if q_type not in exam_parameters['question_types']:
+                        q_type = exam_parameters['question_types'][0]
+                    
+                    # Get difficulty with validation
+                    difficulty = q_data.get('difficulty', '')
+                    if difficulty not in exam_parameters['difficulty']:
+                        difficulty = exam_parameters['difficulty'][0]
+                    
+                    # Process answer and options
+                    answer = str(q_data.get('answer', ''))
+                    options = q_data.get('options', [])
+                    
+                    # Validate options for multiple choice
+                    if q_type == 'multiple_choice_single_answer':
+                        if not options or len(options) < 4:
+                            options = [answer, "Option B", "Option C", "Option D"]
+                    
+                    # Create validated question
+                    question = Question(
+                        difficulty=difficulty,
+                        type=q_type,
+                        question_text=question_text,
+                        options=options,
+                        answer=answer
+                    )
+                    questions.append(question)
+                    
+                except Exception as q_error:
+                    logger.error(f"❌ Error processing question: {q_error}")
+                    continue
             
-            # Apply professional exam enhancements
-            enhanced_questions = await self._enhance_questions_professionally(questions, exam_parameters)
+            if not questions:
+                logger.error("❌ No valid questions parsed from agent output")
+                return []
             
-            logger.info(f"✅ Successfully parsed and enhanced {len(enhanced_questions)} questions from agent output")
-            return enhanced_questions
+            logger.info(f"✅ Successfully parsed {len(questions)} questions")
+            return questions
+            
+        except Exception as e:
+            logger.error(f"❌ Error parsing agent output: {e}")
+            return []
             
         except Exception as e:
             logger.error(f"❌ Error parsing agent output: {e}")
@@ -1931,29 +3266,41 @@ Start by calling the topic_question_generator tool now."""
         try:
             import re
             
-            # Common patterns to remove
+            # Enhanced patterns to remove unwanted phrases
             patterns_to_remove = [
+                # "According to" patterns
+                r'(?:according to|as described in|referencing|detailed in|from|in)\s+(?:the\s+)?(?:content|text|book|material|course\s+book)[,\s]*',
+                r'(?:according to|as described in|referencing|detailed in|from|in)\s+(?:the\s+)?chapter\s+\d+[,\s]*',
+                r'according\s+to\s+the[^,.?]*[,\s]*',
+                r'as\s+(?:mentioned|stated|described)\s+in[^,.?]*[,\s]*',
+                r'based\s+on\s+the\s+provided[^,.?]*[,\s]*',
+                
+                # Chapter references
+                r'(?:what does|what is)\s+chapter\s+\d+.*?(?:cover|describe|focus on)[,\s]*',
+                r'chapter\s+\d+\s+(?:of\s+the\s+)?(?:course\s+)?book[,\s]*',
+                r'(?:as\s+described\s+in\s+)?chapter\s+\d+[,\s]*',
+                
+                # Content references
+                r'the\s+content\s+(?:describes|mentions|states)[,\s]*',
+                r'the\s+text\s+(?:describes|mentions|states)[,\s]*',
+                r'the\s+(?:course\s+)?book\s+(?:describes|mentions|states)[,\s]*',
+                
                 # Book/guide references
                 r'(?:according to|as described in|referencing|detailed in|from|in)\s+(?:the\s+)?[A-Z_][A-Z0-9_]*(?:\s+[A-Z_][A-Z0-9_]*)*(?:\s+GUIDE?|HANDBOOK|MANUAL|BOOK)?[,\s]*',
                 r'(?:according to|as described in|referencing|detailed in|from|in)\s+(?:the\s+)?\"[^\"]+\"[,\s]*',
                 r'(?:according to|as described in|referencing|detailed in|from|in)\s+(?:the\s+)?\'[^\']+\'[,\s]*',
                 
-                # Specific guide patterns
+                # Other reference patterns
                 r'[,\s]*referencing considerations detailed in[^,.?]*[,\s]*',
                 r'[,\s]*as outlined in[^,.?]*[,\s]*',
                 r'[,\s]*mentioned in[^,.?]*[,\s]*',
                 r'[,\s]*described in[^,.?]*[,\s]*',
-                
-                # Clean up extra spaces and punctuation
-                r'\s+', # Multiple spaces
-                r'^[,\s]+|[,\s]+$', # Leading/trailing commas and spaces
-                r'[,\s]*\?+$', # Multiple question marks
             ]
             
             cleaned_text = question_text
             
             # Apply all patterns
-            for pattern in patterns_to_remove[:-3]:  # Don't apply cleanup patterns yet
+            for pattern in patterns_to_remove:
                 cleaned_text = re.sub(pattern, '', cleaned_text, flags=re.IGNORECASE)
             
             # Apply cleanup patterns
@@ -2159,25 +3506,89 @@ CRITICAL REQUIREMENTS:
         try:
             logger.info(f"🔄 Using fallback method for book '{book_title}' topic '{topic}'")
             
-            # Use curriculum embedding search instead of individual book tables
-            try:
-                # Use IT curriculum as default since most content is in IT curriculum
-                curriculum_name = "IT"
+            # Get book info to determine correct curriculum
+            book_info = await self._get_book_curriculum_info(book_title)
+            curriculum_name = book_info.get('curriculum_name') if book_info else "IT"
+            logger.info(f"📚 Using curriculum '{curriculum_name}' for book '{book_title}'")
+
+            if book_title and book_title != "General Content":
+                # Use book-specific search with multiple attempts for different topic aspects
+                all_chunks = []
                 
-                if book_title and book_title != "General Content":
-                    # Use book-specific search
-                    search_results = await self._search_book_embeddings(curriculum_name, book_title, topic, k=8)
-                    content_chunks = [r['content'] for r in search_results] if search_results else []
-                else:
-                    # Use general curriculum search
-                    search_results = await self._search_curriculum_embeddings(curriculum_name, topic, k=8)
-                    content_chunks = [r['content'] for r in search_results] if search_results else []
+                # Try main search first
+                search_results = await self._search_book_embeddings(curriculum_name, book_title, topic, k=5)
+                if search_results:
+                    all_chunks.extend([r['content'] for r in search_results])
+                    logger.info(f"✅ Found {len(search_results)} chunks for main topic search")
+                
+                # If it's a comprehensive search, try additional topics based on curriculum
+                if "comprehensive" in topic.lower() or "whole book" in topic.lower():
+                    if "law" in curriculum_name.lower():
+                        additional_topics = [
+                            "civil law contracts obligations",
+                            "legal rights responsibilities procedures",
+                            "judicial system court processes"
+                        ]
+                    else:
+                        additional_topics = [
+                            "introduction fundamentals principles",
+                            "key concepts main topics",
+                            "practical applications examples"
+                        ]
                     
-                content = "\n\n".join(content_chunks) if content_chunks else f"General content about {topic}"
-                logger.info(f"✅ Fallback method retrieved {len(content_chunks)} content chunks")
-            except Exception as e:
-                logger.error(f"❌ Error in fallback search: {e}")
+                    for additional_topic in additional_topics:
+                        more_results = await self._search_book_embeddings(curriculum_name, book_title, additional_topic, k=3)
+                        if more_results:
+                            all_chunks.extend([r['content'] for r in more_results])
+                            logger.info(f"✅ Found {len(more_results)} chunks for additional topic: {additional_topic}")
+                
+                if not all_chunks:
+                    # If no chunks found, try to extract topics and search again
+                    topics = await self._extract_book_topics(curriculum_name, book_title)
+                    logger.info(f"🔄 Retrying search with extracted topics: {topics}")
+                    
+                    for topic in topics:
+                        more_results = await self._search_book_embeddings(curriculum_name, book_title, topic, k=3)
+                        if more_results:
+                            all_chunks.extend([r['content'] for r in more_results])
+                            logger.info(f"✅ Found {len(more_results)} chunks for topic: {topic}")
+                    
+                    if not all_chunks:
+                        logger.warning(f"⚠️ Still no embeddings found after topic-based search")
+                        
+                content_chunks = all_chunks
+            else:
+                # Use general curriculum search with topic extraction
+                topics = await self._extract_book_topics(curriculum_name, "General Content")
+                all_chunks = []
+                
+                for topic in topics:
+                    results = await self._search_curriculum_embeddings(curriculum_name, topic, k=3)
+                    if results:
+                        all_chunks.extend([r['content'] for r in results])
+                        logger.info(f"✅ Found {len(results)} chunks for curriculum topic: {topic}")
+                
+                content_chunks = all_chunks
+            
+            # Ensure content_chunks is a list and not None
+            if not content_chunks:
+                content_chunks = []
+                logger.warning("⚠️ No content chunks retrieved, using fallback content")
+            
+            # Filter out None values and empty strings
+            valid_chunks = [chunk for chunk in content_chunks if chunk and isinstance(chunk, str)]
+            
+            if valid_chunks:
+                content = "\n\n".join(valid_chunks)
+                logger.info(f"✅ Fallback method retrieved {len(valid_chunks)} valid content chunks")
+            else:
                 content = f"General content about {topic}"
+                logger.warning(f"⚠️ No valid content chunks found for topic: {topic}")
+                
+        except Exception as e:
+            logger.error(f"❌ Error in fallback search: {e}")
+            content = f"General content about {topic}"
+            valid_chunks = []
             
             # Extract parameters for comprehensive exam generation
             count = parameters.get('count', 2)

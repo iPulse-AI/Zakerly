@@ -1,4 +1,5 @@
 import asyncpg
+import asyncio
 import os
 from typing import Optional, List, Dict, Any
 import logging
@@ -12,18 +13,27 @@ class DatabaseManager:
         self.pool: Optional[asyncpg.Pool] = None
 
     async def initialize(self):
-        """Initialize database connection pool"""
+        """Initialize database connection pool with improved settings"""
         try:
             self.pool = await asyncpg.create_pool(
                 self.database_url,
-                min_size=5,
-                max_size=20,
-                command_timeout=60
+                min_size=10,  # Increased minimum connections
+                max_size=30,  # Increased maximum connections
+                max_queries=50000,  # Maximum queries per connection
+                max_inactive_connection_lifetime=300.0,  # 5 minutes
+                command_timeout=60,
+                timeout=10.0,  # Connection timeout
+                init=self._init_connection  # Initialize each connection
             )
-            logger.info("Database connection pool initialized")
+            logger.info("Database connection pool initialized with improved settings")
         except Exception as e:
             logger.error(f"Failed to initialize database pool: {e}")
             raise
+
+    async def _init_connection(self, connection):
+        """Initialize connection with proper settings"""
+        await connection.execute('SET statement_timeout = 30000')  # 30 seconds
+        await connection.execute('SET idle_in_transaction_session_timeout = 60000')  # 1 minute
 
     async def close(self):
         """Close database connection pool"""
@@ -31,14 +41,17 @@ class DatabaseManager:
             await self.pool.close()
             logger.info("Database connection pool closed")
 
-    @asynccontextmanager
+    @asynccontextmanager  
     async def get_connection(self):
         """Get database connection from pool"""
         if not self.pool:
-            raise RuntimeError("Database pool not initialized")
+            await self.initialize()
         
-        async with self.pool.acquire() as connection:
+        connection = await self.pool.acquire()
+        try:
             yield connection
+        finally:
+            await self.pool.release(connection)
 
     async def execute_query(self, query: str, *args) -> List[Dict[str, Any]]:
         """Execute a SELECT query and return results"""
@@ -111,7 +124,10 @@ class DatabaseManager:
         return await self.execute_query(query)
 
     async def get_book_by_title(self, title: str) -> Optional[Dict[str, Any]]:
-        """Get book by title"""
+        """Get book by title with improved error handling"""
+        max_retries = 3
+        retry_delay = 1  # seconds
+        
         query = """
             SELECT b.*, 
                    cur.name as curriculum_name
@@ -119,7 +135,19 @@ class DatabaseManager:
             JOIN curriculum cur ON b.curriculum_id = cur.id
             WHERE b.title = $1
         """
-        return await self.fetch_one(query, title)
+        
+        for attempt in range(max_retries):
+            try:
+                return await self.fetch_one(query, title)
+            except asyncpg.exceptions.ConnectionDoesNotExistError:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Connection lost while getting book info, retrying ({attempt + 1}/{max_retries})")
+                    await asyncio.sleep(retry_delay)
+                    continue
+                raise
+            except Exception as e:
+                logger.error(f"Error getting book by title '{title}': {e}")
+                raise
 
     async def check_book_exists(self, file_hash: str) -> bool:
         """Check if book exists by file hash"""
@@ -386,6 +414,8 @@ class DatabaseManager:
             
             logger.info(f"Found {len(rows)} embeddings for book_id {book_id} in {table_name}")
             return [{'content': row['content'], 'metadata': row['metadata'], 'distance': row['distance']} for row in rows]
+
+
 
 # Global database instance
 db_manager: Optional[DatabaseManager] = None
