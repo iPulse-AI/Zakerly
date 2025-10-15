@@ -187,3 +187,13 @@ class ErrorResponse(BaseModel):
     error: str
     detail: Optional[str] = None
     timestamp: datetime
+
+class CurriculumScriptRequest(BaseModel):
+    curriculum_id: int
+    title: str
+    scope: str = Field(..., description="Scope: whole_curriculum, whole_book, or specific_topics")
+    specific_books: Optional[List[int]] = None
+    specific_topics: Optional[str] = None
+    detail_level: str = Field(..., description="Detail level: overview, detailed, or in-depth")
+    difficulty: str = Field(..., description="Difficulty: beginner, intermediate, or advanced")
+    duration: int = Field(..., description="Duration in minutes")

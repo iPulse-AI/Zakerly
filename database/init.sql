@@ -161,22 +161,6 @@ CREATE TRIGGER update_curriculum_updated_at
     BEFORE UPDATE ON curriculum 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
--- Create function to limit curriculums to maximum 5
-CREATE OR REPLACE FUNCTION check_curriculum_limit()
-RETURNS TRIGGER AS $$
-BEGIN
-    IF (SELECT COUNT(*) FROM curriculum) >= 5 THEN
-        RAISE EXCEPTION 'Maximum of 5 curriculums allowed';
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
--- Create trigger to enforce curriculum limit
-CREATE TRIGGER curriculum_limit_trigger
-    BEFORE INSERT ON curriculum
-    FOR EACH ROW EXECUTE FUNCTION check_curriculum_limit();
-
 -- Create functions for curriculum embedding tables
 CREATE OR REPLACE FUNCTION create_curriculum_embedding_table(curriculum_name TEXT, embedding_dimension INTEGER DEFAULT 1536)
 RETURNS TEXT AS $$

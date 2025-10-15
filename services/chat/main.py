@@ -15,7 +15,7 @@ sys.path.append('/app/shared')
 from models import (
     ChatRequest, ChatResponse, QuestionGenerationRequest, QuestionResponse,
     LectureRequest, LectureScript, LectureScriptRequest, LectureScriptUpdate,
-    HealthCheck, ChatSessionModel
+    CurriculumScriptRequest, HealthCheck, ChatSessionModel
 )
 from database import get_database, DatabaseManager
 from utils import setup_logging, get_redis, generate_session_id
@@ -380,6 +380,59 @@ async def delete_script(
         raise
     except Exception as e:
         logger.error(f"Error deleting script {script_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+# Enhanced Curriculum Script Generation endpoint
+@app.post("/curriculum-scripts/generate")
+async def generate_curriculum_script(
+    request: CurriculumScriptRequest,
+    user_id: str,
+    chat_service: ChatService = Depends(get_chat_service)
+):
+    """Generate script based on curriculum scope (whole_curriculum, whole_book, specific_topics)"""
+    try:
+        logger.info(f"Received curriculum script request: {request}")
+        logger.info(f"User ID: {user_id}")
+        
+        # Validate request fields
+        if not request.curriculum_id:
+            raise HTTPException(status_code=422, detail="curriculum_id is required")
+        if not request.title:
+            raise HTTPException(status_code=422, detail="title is required")
+        if not request.scope:
+            raise HTTPException(status_code=422, detail="scope is required")
+        if request.scope not in ['whole_curriculum', 'whole_book', 'specific_topics']:
+            raise HTTPException(status_code=422, detail="scope must be one of: whole_curriculum, whole_book, specific_topics")
+        
+        # Convert request to dict for the service method
+        request_dict = {
+            'curriculum_id': request.curriculum_id,
+            'title': request.title,
+            'scope': request.scope,
+            'specific_books': request.specific_books,
+            'specific_topics': request.specific_topics,
+            'detail_level': request.detail_level,
+            'difficulty': request.difficulty,
+            'duration': request.duration
+        }
+        
+        logger.info(f"Processing curriculum script generation with: {request_dict}")
+        
+        script_content = await chat_service.generate_curriculum_script(request_dict)
+        
+        return {
+            "script_content": script_content,
+            "title": request.title,
+            "scope": request.scope,
+            "curriculum_id": request.curriculum_id,
+            "generated_at": datetime.now().isoformat()
+        }
+        
+    except ValueError as e:
+        logger.error(f"Validation error generating curriculum script: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error generating curriculum script: {e}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 if __name__ == "__main__":

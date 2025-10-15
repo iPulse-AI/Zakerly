@@ -674,6 +674,30 @@ async def verify_token(request: Request):
         logger.error(f"Error verifying token: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# Enhanced Curriculum Script Generation Endpoint
+@app.post("/api/v1/curriculum-scripts/generate", dependencies=[Depends(check_rate_limit)])
+async def generate_curriculum_script(request: Request, user_id: str):
+    """Generate script based on curriculum scope (whole_curriculum, whole_book, specific_topics)"""
+    try:
+        data = await request.json()
+        params = {"user_id": user_id}
+        
+        result = await forward_request(
+            CHAT_SERVICE_URL,
+            "/curriculum-scripts/generate",
+            method="POST",
+            data=data,
+            params=params
+        )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in generate curriculum script endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Lecture Scripts Endpoints
 @app.post("/api/v1/scripts", dependencies=[Depends(check_rate_limit)])
 async def create_script(request: Request, user_id: str):

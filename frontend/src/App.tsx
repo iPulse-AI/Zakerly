@@ -13,7 +13,8 @@ import ExamView from "./pages/ExamView";
 import Chat from "./pages/Chat";
 import Books from "./pages/Books";
 import AddBook from "./pages/AddBook";
-import Scripts from "./pages/Scripts";
+import Scripts from './pages/Scripts_New';
+import ScriptSetup from './pages/Scripts';
 import Features from "./pages/Features";
 import SignIn from "./pages/SignIn";
 import SignUp from "./pages/SignUp";
@@ -84,6 +85,11 @@ const App = () => (
             <Route path="/scripts" element={
               <ProtectedRoute>
                 <Scripts />
+              </ProtectedRoute>
+            } />
+            <Route path="/scripts/create" element={
+              <ProtectedRoute>
+                <ScriptSetup />
               </ProtectedRoute>
             } />
             

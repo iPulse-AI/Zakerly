@@ -149,6 +149,32 @@ class DatabaseManager:
                 logger.error(f"Error getting book by title '{title}': {e}")
                 raise
 
+    async def get_book_by_id(self, book_id: int) -> Optional[Dict[str, Any]]:
+        """Get book by ID with curriculum information"""
+        max_retries = 3
+        retry_delay = 1  # seconds
+        
+        query = """
+            SELECT b.*, 
+                   cur.name as curriculum_name
+            FROM books b
+            JOIN curriculum cur ON b.curriculum_id = cur.id
+            WHERE b.id = $1
+        """
+        
+        for attempt in range(max_retries):
+            try:
+                return await self.fetch_one(query, book_id)
+            except asyncpg.exceptions.ConnectionDoesNotExistError:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Connection lost while getting book by ID, retrying ({attempt + 1}/{max_retries})")
+                    await asyncio.sleep(retry_delay)
+                    continue
+                raise
+            except Exception as e:
+                logger.error(f"Error getting book by ID '{book_id}': {e}")
+                raise
+
     async def check_book_exists(self, file_hash: str) -> bool:
         """Check if book exists by file hash"""
         query = "SELECT COUNT(*) FROM books WHERE file_hash = $1"

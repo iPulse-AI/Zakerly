@@ -19,6 +19,7 @@ export const API_ENDPOINTS = {
   CHAT: '/api/v1/chat',
   GENERATE_QUESTIONS: '/api/v1/generate-questions',
   GENERATE_LECTURE: '/api/v1/generate-lecture',
+  GENERATE_CURRICULUM_SCRIPT: '/api/v1/curriculum-scripts/generate',
   
   // Sessions
   SESSIONS: '/api/v1/sessions',

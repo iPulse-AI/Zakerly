@@ -295,7 +295,7 @@ You have access to a tool called "knowledge_retriever_tool" that searches the bo
 - **Mathematics:** Provide intuitive explanations, multiple solution approaches, practical applications
 - **Literature/Humanities:** Analyze themes, historical context, critical perspectives, cultural significance
 - **History:** Chronological narrative, cause-effect analysis, multiple viewpoints, contemporary relevance
-- **Business:** Case studies, practical frameworks, market analysis, strategic implications
+- **Professional Studies:** Case studies, practical frameworks, industry analysis, strategic implications
 - **Psychology:** Research foundations, practical applications, ethical considerations, human behavior patterns
 
 **Quality Standards:**
@@ -825,7 +825,7 @@ End your response with: `(Source: Internal Knowledge Base)` or `(Source: Web Sea
             book_info = await self._get_book_curriculum_info(book_title)
             if not book_info:
                 logger.warning(f"Book '{book_title}' not found for TOC extraction")
-                return self._get_default_topics(curriculum_name)
+                return await self._extract_keywords_from_random_chunks(curriculum_name)
             
             book_id = book_info['id']
             actual_curriculum = book_info.get('curriculum_name', curriculum_name)
@@ -859,7 +859,7 @@ End your response with: `(Source: Internal Knowledge Base)` or `(Source: Web Sea
                 
         except Exception as e:
             logger.error(f"❌ Error extracting topics from TOC: {e}")
-            return self._get_default_topics(curriculum_name)
+            return await self._extract_keywords_from_random_chunks(curriculum_name)
 
     async def _search_for_toc_content(self, book_title: str, curriculum_name: str, book_id: int) -> List[Dict[str, Any]]:
         """Search for chunks containing table of contents using multiple TOC-related queries"""
@@ -943,63 +943,65 @@ End your response with: `(Source: Internal Knowledge Base)` or `(Source: Web Sea
             return []
 
     async def _parse_toc_topics(self, toc_chunks: List[Dict[str, Any]], book_title: str, curriculum_name: str) -> List[str]:
-        """Parse Table of Contents content to extract topics/chapters using LLM"""
+        """Parse Table of Contents content to extract searchable keywords and terms using LLM"""
         try:
             # Combine all TOC content
             toc_content = "\n\n".join([chunk.get('content', '') for chunk in toc_chunks if chunk.get('content')])
-            logger.info(f"📝 TOC CONTENT: {len(toc_content)} characters to parse")
+            logger.info(f"📝 TOC CONTENT: {len(toc_content)} characters to parse for keywords")
             
             if not toc_content.strip():
                 logger.warning("⚠️ No valid TOC content to parse")
                 return []
             
-            # Sample the content for logging
-            content_preview = toc_content[:300] + "..." if len(toc_content) > 300 else toc_content
-            logger.info(f"📄 TOC PREVIEW: {content_preview}")
-            
-            # Use LLM to extract structured topics from TOC
-            prompt = f"""
-Analyze the following Table of Contents or beginning content from the book "{book_title}" and extract the main topics, chapters, or sections.
+            # Use enhanced keyword extraction for TOC content
+            toc_keyword_prompt = ChatPromptTemplate.from_messages([
+                ("system", f"""You are an expert at analyzing table of contents and extracting searchable keywords and terms from academic and technical books.
 
-CONTENT TO ANALYZE:
-{toc_content[:4000]}
+Extract specific, searchable keywords and terms from the Table of Contents content. Focus on:
 
-TASK: Extract a clean list of main topics/chapters from this content. Focus on:
-- Chapter titles
-- Section headings  
-- Main topics
-- Key subject areas relevant to {curriculum_name}
+KEYWORD TYPES TO EXTRACT:
+- **Chapter topics**: Specific subject areas mentioned in chapter titles
+- **Technical terms**: Specialized vocabulary and concepts
+- **Methods/Processes**: Specific approaches, procedures, or methodologies
+- **Tools/Technologies**: Specific tools, systems, or technologies mentioned
+- **Concepts**: Important ideas and principles
+- **Standards/Protocols**: Specific standards, frameworks, or protocols
 
-Return ONLY a JSON array of topic strings, like:
-["Topic 1", "Topic 2", "Topic 3", ...]
+EXTRACTION CRITERIA:
+- Extract terms that would be useful as search queries
+- Include both single words and short phrases (2-4 words max)
+- Focus on domain-specific terminology for {curriculum_name}
+- Prioritize concrete, searchable terms over abstract concepts
 
-Maximum 10 topics. Be concise and focus on the most important {curriculum_name}-related topics.
-Exclude generic terms like "Introduction", "Conclusion", "References", "Index".
-"""
+BOOK CONTEXT: {book_title}
+CURRICULUM: {curriculum_name}
 
-            logger.info(f"🚀 SENDING TOC to LLM for topic extraction")
-            
-            # Create LLM chain for topic extraction
-            topic_prompt = ChatPromptTemplate.from_messages([
-                ("system", "You are an expert at analyzing table of contents and extracting meaningful topics from academic and technical books."),
-                ("human", prompt)
+Return ONLY a JSON array of searchable keyword strings:
+["keyword1", "keyword2", "keyword3", ...]
+
+Maximum 12 keywords. Focus on the most important and searchable terms."""),
+                ("human", "Extract searchable keywords and terms from this Table of Contents content:\n\n{content}")
             ])
             
-            chain = topic_prompt | self.get_current_llm() | StrOutputParser()
-            response = await chain.ainvoke({})
+            chain = toc_keyword_prompt | self.get_current_llm() | StrOutputParser()
+            response = await chain.ainvoke({
+                "content": toc_content[:4000],  # Limit content size
+                "book_title": book_title,
+                "curriculum_name": curriculum_name
+            })
             
             # Parse the response
-            topics = self._parse_topics_from_llm_response(response)
+            keywords = self._parse_keywords_from_llm_response(response)
             
-            if topics:
-                logger.info(f"✅ TOC PARSING SUCCESS: Extracted {len(topics)} topics")
-                return topics
+            if keywords:
+                logger.info(f"✅ TOC PARSING SUCCESS: Extracted {len(keywords)} searchable keywords")
+                return keywords
             else:
-                logger.warning("⚠️ TOC parsing returned no topics")
+                logger.warning("⚠️ TOC parsing returned no keywords")
                 return []
                 
         except Exception as e:
-            logger.error(f"❌ Error parsing TOC topics: {e}")
+            logger.error(f"❌ Error parsing TOC keywords: {e}")
             return []
 
     def _parse_topics_from_llm_response(self, response_content: str) -> List[str]:
@@ -1078,7 +1080,8 @@ Exclude generic terms like "Introduction", "Conclusion", "References", "Index".
             
             if not initial_results:
                 logger.warning(f"⚠️ No content found for fallback topic extraction")
-                return self._get_curriculum_specific_topics(curriculum_name)
+                # UPDATED: Use dynamic extraction instead of fixed topics
+                return await self._extract_keywords_from_random_chunks(curriculum_name, book_title)
             
             logger.info(f"📊 FALLBACK: Found {len(initial_results)} content chunks")
             
@@ -1099,15 +1102,15 @@ Exclude generic terms like "Introduction", "Conclusion", "References", "Index".
             topics = [t.strip() for t in topics_result.split(',') if t.strip() and len(t.strip()) > 3]
             
             if not topics:
-                logger.warning("⚠️ FALLBACK: No valid topics extracted, using curriculum defaults")
-                return self._get_curriculum_specific_topics(curriculum_name)
+                logger.warning("⚠️ FALLBACK: No valid topics extracted, using dynamic random chunks")
+                return await self._extract_keywords_from_random_chunks(curriculum_name, book_title)
             
             logger.info(f"✅ FALLBACK SUCCESS: Extracted {len(topics)} topics: {topics}")
             return topics
             
         except Exception as e:
             logger.error(f"❌ FALLBACK ERROR: {e}")
-            return self._get_curriculum_specific_topics(curriculum_name)
+            return await self._extract_keywords_from_random_chunks(curriculum_name, book_title)
 
     async def _generate_fallback_questions(self, book_title: str, curriculum_name: str, exam_parameters: Dict[str, Any]) -> List[Question]:
         """Generate fallback questions when the agent-based approach fails"""
@@ -1292,66 +1295,284 @@ Exclude generic terms like "Introduction", "Conclusion", "References", "Index".
                 answer="A comprehensive explanation of the key concepts and principles."
             )]
     
-    def _get_curriculum_specific_topics(self, curriculum_name: str) -> List[str]:
-        """Get curriculum-specific default topics"""
-        curriculum_topics = {
-            'law': [
-                "civil law fundamentals",
-                "contract formation and obligations",
-                "property rights and ownership",
-                "legal procedures and remedies",
-                "judicial system and courts",
-                "civil liability and damages",
-                "legal documentation requirements",
-                "statutory interpretation principles"
-            ],
-            'medical': [
-                "clinical diagnosis procedures",
-                "treatment methodologies",
-                "patient care protocols",
-                "medical ethics guidelines",
-                "healthcare procedures",
-                "disease management",
-                "preventive medicine practices",
-                "medical documentation standards"
-            ],
-            'it': [
-                "software development principles",
-                "system architecture",
-                "database management",
-                "network security",
-                "application design",
-                "programming fundamentals",
-                "system integration",
-                "technology infrastructure"
-            ]
-        }
-        
-        # Get the normalized curriculum name
-        norm_curriculum = next(
-            (k for k in curriculum_topics.keys() if k in curriculum_name.lower()),
-            'general'
-        )
-        
-        if norm_curriculum in curriculum_topics:
-            return curriculum_topics[norm_curriculum]
-        
-        # Fallback to generic topics if curriculum not recognized
-        return [
-            "key concepts and principles",
-            "fundamental theories",
-            "practical applications",
-            "standard methodologies",
-            "best practices",
-            "industry standards",
-            "implementation techniques",
-            "professional guidelines"
-        ]
-        
-    def _get_default_topics(self, curriculum_name: str) -> List[str]:
-        """Get default topics based on curriculum type (legacy method)"""
-        return self._get_curriculum_specific_topics(curriculum_name)
+    async def _extract_keywords_from_random_chunks(self, curriculum_name: str, book_title: str = None) -> List[str]:
+        """
+        Dynamic fallback: Get random chunks and extract searchable keywords/terms from them
+        This replaces the fixed curriculum-specific topics with dynamic keyword extraction
+        """
+        try:
+            logger.info(f"🎲 DYNAMIC FALLBACK: Extracting searchable keywords from random chunks")
+            
+            # Get random chunks from curriculum or specific book
+            if book_title:
+                # Get random chunks from specific book
+                book_info = await self._get_book_curriculum_info(book_title)
+                if book_info:
+                    chunks = await self._get_random_book_chunks(curriculum_name, book_info['id'], count=8)
+                else:
+                    chunks = await self._get_random_curriculum_chunks(curriculum_name, count=8)
+            else:
+                # Get random chunks from entire curriculum
+                chunks = await self._get_random_curriculum_chunks(curriculum_name, count=10)
+            
+            if not chunks:
+                logger.warning(f"⚠️ No random chunks found for {curriculum_name}")
+                return ["fundamental concepts", "key principles", "main topics"]
+            
+            # Combine chunk content
+            combined_content = "\n\n".join([chunk['content'] for chunk in chunks])
+            logger.info(f"📝 Analyzing {len(combined_content)} characters from {len(chunks)} random chunks")
+            
+            # Extract keywords/terms using enhanced LLM prompt
+            extracted_keywords = await self._extract_keywords_from_content_llm(combined_content, curriculum_name)
+            
+            if extracted_keywords:
+                logger.info(f"✅ DYNAMIC EXTRACTION SUCCESS: Found {len(extracted_keywords)} searchable keywords from random chunks")
+                logger.info(f"🔍 Keywords: {extracted_keywords}")
+                return extracted_keywords
+            else:
+                logger.warning(f"⚠️ Dynamic extraction failed, using generic keywords")
+                return ["core concepts", "fundamental principles", "key methodologies"]
+                
+        except Exception as e:
+            logger.error(f"❌ Error in dynamic keyword extraction: {e}")
+            return ["general topics", "basic concepts", "main principles"]
 
+    async def _get_random_curriculum_chunks(self, curriculum_name: str, count: int = 10) -> List[Dict[str, Any]]:
+        """Get random chunks from curriculum for keyword extraction"""
+        try:
+            async with self.get_db_connection() as conn:
+                table_name = f"curriculum_embeddings_{curriculum_name.lower().replace(' ', '_')}"
+                
+                # Check if table exists
+                table_exists_query = """
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = $1
+                )
+                """
+                table_exists = await conn.fetchval(table_exists_query, table_name)
+                
+                if not table_exists:
+                    logger.warning(f"⚠️ Table {table_name} does not exist")
+                    return []
+                
+                # Get random chunks using ORDER BY RANDOM()
+                query = f"""
+                SELECT content, metadata 
+                FROM {table_name} 
+                WHERE char_length(content) > 100 
+                ORDER BY RANDOM() 
+                LIMIT $1
+                """
+                
+                results = await conn.fetch(query, count)
+                
+                chunks = []
+                for row in results:
+                    chunks.append({
+                        'content': row['content'],
+                        'metadata': row['metadata'] if row['metadata'] else {}
+                    })
+                
+                logger.info(f"🎲 Retrieved {len(chunks)} random chunks from curriculum")
+                return chunks
+                
+        except Exception as e:
+            logger.error(f"❌ Error getting random curriculum chunks: {e}")
+            return []
+
+    async def _get_random_book_chunks(self, curriculum_name: str, book_id: int, count: int = 8) -> List[Dict[str, Any]]:
+        """Get random chunks from specific book for keyword extraction"""
+        try:
+            async with self.get_db_connection() as conn:
+                table_name = f"curriculum_embeddings_{curriculum_name.lower().replace(' ', '_')}"
+                
+                # Check if table exists
+                table_exists_query = """
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = $1
+                )
+                """
+                table_exists = await conn.fetchval(table_exists_query, table_name)
+                
+                if not table_exists:
+                    logger.warning(f"⚠️ Table {table_name} does not exist")
+                    return []
+                
+                # Get random chunks from specific book
+                query = f"""
+                SELECT content, metadata 
+                FROM {table_name} 
+                WHERE book_id = $1 AND char_length(content) > 100 
+                ORDER BY RANDOM() 
+                LIMIT $2
+                """
+                
+                results = await conn.fetch(query, book_id, count)
+                
+                chunks = []
+                for row in results:
+                    chunks.append({
+                        'content': row['content'],
+                        'metadata': row['metadata'] if row['metadata'] else {}
+                    })
+                
+                logger.info(f"🎲 Retrieved {len(chunks)} random chunks from book {book_id}")
+                return chunks
+                
+        except Exception as e:
+            logger.error(f"❌ Error getting random book chunks: {e}")
+            return []
+
+    async def _extract_keywords_from_content_llm(self, content: str, curriculum_name: str) -> List[str]:
+        """Extract searchable keywords and terms from content using LLM analysis"""
+        try:
+            logger.info(f"🤖 Using LLM to extract searchable keywords from content")
+            
+            # ENHANCED KEYWORD EXTRACTION PROMPT
+            keyword_extraction_prompt = ChatPromptTemplate.from_messages([
+                ("system", f"""You are an expert keyword extraction specialist. Your task is to extract specific, searchable keywords and terms from the provided content that can be used as search queries to find related material.
+
+CRITICAL REQUIREMENTS:
+- Extract 10-15 specific keywords/terms that appear in the content
+- Focus on technical terms, concepts, tools, methods, and specific topics
+- Extract terms that would be useful as search queries to find similar content
+- Include both single words and short phrases (2-4 words max)
+- Prioritize domain-specific terminology for {curriculum_name}
+- Include proper nouns, technical concepts, and important terms
+
+KEYWORD TYPES TO EXTRACT:
+1. **Technical Terms**: Specific technical vocabulary and jargon
+2. **Concepts**: Important ideas and principles mentioned
+3. **Tools/Methods**: Specific tools, methodologies, or approaches
+4. **Processes**: Names of procedures, workflows, or systems
+5. **Standards**: Protocols, standards, or frameworks mentioned
+6. **Entities**: Important names, organizations, or products
+
+EXAMPLES OF GOOD KEYWORDS:
+✅ "data pipeline"
+✅ "Apache Kafka" 
+✅ "machine learning"
+✅ "REST API"
+✅ "database schema"
+✅ "encryption"
+✅ "load balancing"
+✅ "microservices"
+
+EXAMPLES OF POOR KEYWORDS (AVOID):
+❌ "important concepts"
+❌ "main ideas"
+❌ "key principles"
+❌ "various methods"
+❌ "different approaches"
+
+EXTRACTION STRATEGY:
+- Look for repeated terms and concepts in the content
+- Extract terms that seem central to the subject matter
+- Include acronyms and technical abbreviations
+- Focus on searchable, concrete terms rather than abstract concepts
+
+CURRICULUM CONTEXT: {curriculum_name}
+
+Return ONLY a JSON array of keyword strings:
+["keyword1", "keyword2", "keyword3", ...]
+
+No explanations, no formatting, just the JSON array."""),
+                ("human", "Extract searchable keywords and terms from this content that can be used to find related material:\n\n{content}")
+            ])
+            
+            chain = keyword_extraction_prompt | self.get_current_llm() | StrOutputParser()
+            result = await chain.ainvoke({
+                "content": content[:4000],  # Limit content to prevent token overflow
+                "curriculum_name": curriculum_name
+            })
+            
+            # Parse the JSON response
+            keywords = self._parse_keywords_from_llm_response(result)
+            
+            if keywords and len(keywords) >= 3:
+                logger.info(f"✅ Extracted {len(keywords)} searchable keywords from content")
+                return keywords[:15]  # Limit to 15 keywords
+            else:
+                logger.warning(f"⚠️ LLM extraction returned insufficient keywords")
+                return []
+                
+        except Exception as e:
+            logger.error(f"❌ Error extracting keywords from content using LLM: {e}")
+            return []
+
+    def _parse_keywords_from_llm_response(self, llm_response: str) -> List[str]:
+        """Parse keywords from LLM response with enhanced validation"""
+        try:
+            import json
+            import re
+            
+            logger.info(f"🔍 Parsing keywords from LLM response: {llm_response[:200]}...")
+            
+            # Clean the response
+            cleaned_response = llm_response.strip()
+            
+            # Remove markdown formatting
+            if cleaned_response.startswith('```json'):
+                cleaned_response = cleaned_response.replace('```json\n', '').replace('```json', '').replace('\n```', '').replace('```', '')
+            elif cleaned_response.startswith('```'):
+                cleaned_response = cleaned_response.replace('```\n', '').replace('```', '')
+            
+            # Find JSON array
+            start_idx = cleaned_response.find('[')
+            end_idx = cleaned_response.rfind(']')
+            
+            if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                json_str = cleaned_response[start_idx:end_idx+1]
+                keywords = json.loads(json_str)
+                
+                # Enhanced keyword validation and cleaning
+                clean_keywords = []
+                for keyword in keywords:
+                    if isinstance(keyword, str):
+                        # Clean and validate the keyword
+                        clean_keyword = keyword.strip().strip('"\'')
+                        
+                        # Validation criteria
+                        if (len(clean_keyword) >= 2 and  # Minimum length
+                            len(clean_keyword) <= 50 and  # Maximum length
+                            not clean_keyword.lower() in ['the', 'and', 'or', 'but', 'a', 'an'] and  # Not stop words
+                            not clean_keyword.lower().startswith('important') and  # Not generic terms
+                            not clean_keyword.lower().startswith('main') and
+                            not clean_keyword.lower().startswith('key') and
+                            not clean_keyword.lower().startswith('various') and
+                            clean_keyword.replace(' ', '').replace('-', '').replace('_', '').isalnum()):  # Alphanumeric + spaces/hyphens/underscores
+                            
+                            clean_keywords.append(clean_keyword)
+                
+                logger.info(f"📋 PARSED KEYWORDS: {clean_keywords}")
+                return clean_keywords
+            
+            # Fallback: try to extract from plain text
+            lines = cleaned_response.split('\n')
+            keywords = []
+            for line in lines:
+                line = line.strip()
+                # Look for patterns like "- keyword" or "1. keyword"
+                keyword_match = re.match(r'^[\d\-\•\*\+]\s*\.?\s*(.+)$', line)
+                if keyword_match:
+                    keyword = keyword_match.group(1).strip().strip('"\'')
+                    if len(keyword) > 2 and len(keyword) <= 50:
+                        keywords.append(keyword)
+            
+            if keywords:
+                logger.info(f"📋 FALLBACK PARSED KEYWORDS: {keywords}")
+                return keywords[:15]
+            
+            logger.warning("⚠️ Could not parse keywords from LLM response")
+            return []
+            
+        except Exception as e:
+            logger.error(f"❌ Error parsing keywords from response: {e}")
+            return []
+        
     async def _search_book_embeddings(self, curriculum_name: str, book_title: str, query: str, k: int = 8) -> List[Dict[str, Any]]:
         """Search embeddings for a specific book within curriculum with smart topic extraction"""
         max_retries = 3
@@ -1936,8 +2157,8 @@ Requirements:
             curriculum_topics = await self._extract_curriculum_wide_topics(curriculum_name)
             
             if not curriculum_topics:
-                logger.warning(f"⚠️ No topics extracted, using curriculum defaults")
-                curriculum_topics = self._get_curriculum_specific_topics(curriculum_name)
+                logger.warning(f"⚠️ No topics extracted, using dynamic random chunk extraction")
+                curriculum_topics = await self._extract_keywords_from_random_chunks(curriculum_name)
             
             logger.info(f"✅ STEP 1 DONE: Found {len(curriculum_topics)} curriculum topics: {curriculum_topics}")
             
@@ -1986,16 +2207,16 @@ Requirements:
             overview_topics = await self._extract_topics_from_curriculum_overview(curriculum_name)
             all_topics.extend(overview_topics)
             
-            # METHOD 3: Content-based topic analysis across all books
-            content_topics = await self._extract_topics_from_curriculum_content(curriculum_name)
-            all_topics.extend(content_topics)
+            # METHOD 3: Content-based keyword analysis across all books
+            content_keywords = await self._extract_topics_from_curriculum_content(curriculum_name)
+            all_topics.extend(content_keywords)
             
-            # METHOD 4: Domain-specific topic enhancement
-            domain_topics = self._get_domain_specific_topics(curriculum_name)
-            all_topics.extend(domain_topics)
+            # METHOD 4: Dynamic random chunk analysis (REPLACES domain-specific topics)
+            random_chunk_keywords = await self._extract_keywords_from_random_chunks(curriculum_name)
+            all_topics.extend(random_chunk_keywords)
             
             # Deduplicate, rank, and filter to get the best topics
-            final_topics = self._deduplicate_and_rank_curriculum_topics(all_topics, curriculum_name)
+            final_topics = await self._deduplicate_and_rank_curriculum_topics(all_topics, curriculum_name)
             
             logger.info(f"✅ CURRICULUM TOPICS EXTRACTED: {len(final_topics)} comprehensive topics")
             logger.info(f"📋 Topics: {final_topics}")
@@ -2004,7 +2225,8 @@ Requirements:
             
         except Exception as e:
             logger.error(f"❌ Error extracting curriculum-wide topics: {e}")
-            return self._get_curriculum_specific_topics(curriculum_name)
+            # UPDATED FALLBACK: Use dynamic extraction instead of fixed topics
+            return await self._extract_keywords_from_random_chunks(curriculum_name)
 
     async def _extract_topics_from_all_books_toc(self, curriculum_name: str) -> List[str]:
         """Extract topics from table of contents of ALL books in curriculum"""
@@ -2075,9 +2297,9 @@ Requirements:
             return []
 
     async def _extract_topics_from_curriculum_content(self, curriculum_name: str) -> List[str]:
-        """Analyze content across all books to extract major themes and topics"""
+        """Analyze content across all books to extract searchable keywords and terms"""
         try:
-            logger.info(f"📊 METHOD 3: Content analysis across entire curriculum")
+            logger.info(f"📊 METHOD 3: Content analysis across entire curriculum for searchable keywords")
             
             # Get diverse content samples from across the curriculum
             content_queries = [
@@ -2095,15 +2317,15 @@ Requirements:
                     all_content.extend([chunk['content'] for chunk in chunks])
             
             if not all_content:
-                logger.warning("⚠️ No content found for analysis")
+                logger.warning("⚠️ No content found for keyword analysis")
                 return []
             
-            # Use LLM to analyze content and extract major topics
+            # Use LLM to analyze content and extract searchable keywords
             combined_content = "\n\n".join(all_content[:15])  # Limit to prevent overflow
-            topics = await self._analyze_content_for_topics(combined_content, curriculum_name)
+            keywords = await self._extract_keywords_from_content_llm(combined_content, curriculum_name)
             
-            logger.info(f"📊 CONTENT METHOD: Extracted {len(topics)} topics from content analysis")
-            return topics
+            logger.info(f"📊 CONTENT METHOD: Extracted {len(keywords)} searchable keywords from content analysis")
+            return keywords
             
         except Exception as e:
             logger.error(f"❌ Error extracting topics from curriculum content: {e}")
@@ -2183,48 +2405,7 @@ Return ONLY a JSON array of topic strings:
             logger.error(f"❌ Error analyzing content for topics: {e}")
             return []
 
-    def _get_domain_specific_topics(self, curriculum_name: str) -> List[str]:
-        """Get domain-specific topics based on curriculum type"""
-        try:
-            logger.info(f"🏗️ METHOD 4: Adding domain-specific topics for '{curriculum_name}'")
-            
-            domain_topics = {
-                'law': [
-                    "constitutional law", "contract law", "criminal law", "tort law",
-                    "property law", "administrative law", "civil procedure", 
-                    "legal ethics", "evidence law", "family law"
-                ],
-                'medical': [
-                    "anatomy and physiology", "pathology", "pharmacology", "clinical medicine",
-                    "medical diagnosis", "surgical procedures", "medical ethics",
-                    "patient care", "medical imaging", "emergency medicine"
-                ],
-                'it': [
-                    "software engineering", "database systems", "network security", 
-                    "data structures", "algorithms", "system architecture",
-                    "web development", "cloud computing", "artificial intelligence",
-                    "cybersecurity", "data engineering", "mobile development"
-                ]
-            }
-            
-            # Get normalized curriculum type
-            curriculum_type = next(
-                (k for k in domain_topics.keys() if k in curriculum_name.lower()),
-                'general'
-            )
-            
-            if curriculum_type in domain_topics:
-                topics = domain_topics[curriculum_type]
-                logger.info(f"✅ Added {len(topics)} domain-specific topics for {curriculum_type}")
-                return topics
-            
-            return []
-            
-        except Exception as e:
-            logger.error(f"❌ Error getting domain-specific topics: {e}")
-            return []
-
-    def _deduplicate_and_rank_curriculum_topics(self, all_topics: List[str], curriculum_name: str) -> List[str]:
+    async def _deduplicate_and_rank_curriculum_topics(self, all_topics: List[str], curriculum_name: str) -> List[str]:
         """Smart deduplication and ranking of curriculum topics"""
         try:
             import re
@@ -2255,7 +2436,7 @@ Return ONLY a JSON array of topic strings:
             
             # Ensure we have at least some topics
             if not top_topics:
-                top_topics = self._get_curriculum_specific_topics(curriculum_name)[:10]
+                top_topics = (await self._extract_keywords_from_random_chunks(curriculum_name))[:10]
             
             logger.info(f"✅ Final topics after deduplication: {len(top_topics)}")
             return top_topics
@@ -2382,8 +2563,8 @@ Return ONLY a JSON array of topic strings:
             topics = await self._extract_book_topics(curriculum_name, book_title)
             
             if not topics:
-                logger.warning(f"⚠️ No topics extracted, using curriculum defaults")
-                topics = self._get_curriculum_specific_topics(curriculum_name)
+                logger.warning(f"⚠️ No topics extracted, using dynamic random chunk extraction")
+                topics = await self._extract_keywords_from_random_chunks(curriculum_name, book_title)
             
             logger.info(f"✅ STEP 1 DONE: Found topics: {', '.join(topics[:5])}...")
             
@@ -4444,21 +4625,42 @@ Always end with: (Source: Internal Knowledge Base)
 
     # Lecture Scripts methods
     async def create_lecture_script(self, user_id: str, request) -> dict:
-        """Create a new lecture script"""
+        """Create a new lecture script (supports both curriculum and book-based scripts)"""
         try:
             # Insert into database
             query = """
                 INSERT INTO lecture_scripts 
-                (user_id, book_id, title, scope, specific_topics, detail_level, difficulty, duration, content)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                RETURNING id, user_id, book_id, title, scope, specific_topics, detail_level, difficulty, duration, content, created_at, updated_at
+                (user_id, curriculum_id, book_id, title, scope, specific_topics, specific_books, 
+                 detail_level, difficulty, duration, content, script_style, target_audience,
+                 include_examples, include_exercises, include_visual_aids)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                RETURNING id, user_id, curriculum_id, book_id, title, scope, specific_topics, specific_books,
+                         detail_level, difficulty, duration, content, script_style, target_audience,
+                         include_examples, include_exercises, include_visual_aids, created_at, updated_at
             """
+            
+            # Handle both curriculum and book-based requests
+            curriculum_id = getattr(request, 'curriculum_id', None)
+            book_id = getattr(request, 'book_id', None)
+            specific_books = getattr(request, 'specific_books', None)
+            script_style = getattr(request, 'script_style', 'lecture')
+            target_audience = getattr(request, 'target_audience', 'intermediate')
+            include_examples = getattr(request, 'include_examples', True)
+            include_exercises = getattr(request, 'include_exercises', False)
+            include_visual_aids = getattr(request, 'include_visual_aids', True)
+            
+            # Convert specific_books list to JSON string if provided
+            specific_books_json = None
+            if specific_books and isinstance(specific_books, list):
+                import json
+                specific_books_json = json.dumps(specific_books)
             
             result = await self.db.execute_query(
                 query,
-                user_id, request.book_id, request.title, request.scope,
-                request.specific_topics, request.detail_level, request.difficulty,
-                request.duration, request.content
+                user_id, curriculum_id, book_id, request.title, request.scope,
+                request.specific_topics, specific_books_json, request.detail_level, 
+                request.difficulty, request.duration, request.content, script_style,
+                target_audience, include_examples, include_exercises, include_visual_aids
             )
             
             if result:
@@ -4466,14 +4668,21 @@ Always end with: (Source: Internal Knowledge Base)
                 return {
                     "id": str(row["id"]),
                     "user_id": str(row["user_id"]),
+                    "curriculum_id": row["curriculum_id"],
                     "book_id": row["book_id"],
                     "title": row["title"],
                     "scope": row["scope"],
                     "specific_topics": row["specific_topics"],
+                    "specific_books": row["specific_books"],
                     "detail_level": row["detail_level"],
                     "difficulty": row["difficulty"],
                     "duration": row["duration"],
                     "content": row["content"],
+                    "script_style": row["script_style"],
+                    "target_audience": row["target_audience"],
+                    "include_examples": row["include_examples"],
+                    "include_exercises": row["include_exercises"],
+                    "include_visual_aids": row["include_visual_aids"],
                     "created_at": row["created_at"],
                     "updated_at": row["updated_at"]
                 }
@@ -4519,14 +4728,18 @@ Always end with: (Source: Internal Knowledge Base)
             raise e
 
     async def get_user_scripts(self, user_id: str) -> List[dict]:
-        """Get all lecture scripts for a user"""
+        """Get all lecture scripts for a user (supports both curriculum and book-based scripts)"""
         try:
             query = """
-                SELECT ls.id, ls.user_id, ls.book_id, ls.title, ls.scope, ls.specific_topics, 
-                       ls.detail_level, ls.difficulty, ls.duration, ls.content, ls.created_at, ls.updated_at,
-                       b.title as book_title
+                SELECT ls.id, ls.user_id, ls.curriculum_id, ls.book_id, ls.title, ls.scope, 
+                       ls.specific_topics, ls.specific_books, ls.detail_level, ls.difficulty, 
+                       ls.duration, ls.content, ls.script_style, ls.target_audience,
+                       ls.include_examples, ls.include_exercises, ls.include_visual_aids,
+                       ls.created_at, ls.updated_at,
+                       b.title as book_title, c.name as curriculum_name
                 FROM lecture_scripts ls
                 LEFT JOIN books b ON ls.book_id = b.id
+                LEFT JOIN curriculum c ON ls.curriculum_id = c.id
                 WHERE ls.user_id = $1
                 ORDER BY ls.created_at DESC
             """
@@ -4536,20 +4749,37 @@ Always end with: (Source: Internal Knowledge Base)
             scripts = []
             if result:
                 for row in result:
+                    # Parse specific_books JSON if exists
+                    specific_books = None
+                    if row["specific_books"]:
+                        try:
+                            import json
+                            specific_books = json.loads(row["specific_books"])
+                        except:
+                            specific_books = None
+                    
                     scripts.append({
                         "id": str(row["id"]),
                         "user_id": str(row["user_id"]),
+                        "curriculum_id": row["curriculum_id"],
                         "book_id": row["book_id"],
                         "title": row["title"],
                         "scope": row["scope"],
                         "specific_topics": row["specific_topics"],
+                        "specific_books": specific_books,
                         "detail_level": row["detail_level"],
                         "difficulty": row["difficulty"],
                         "duration": row["duration"],
                         "content": row["content"],
+                        "script_style": row["script_style"],
+                        "target_audience": row["target_audience"],
+                        "include_examples": row["include_examples"],
+                        "include_exercises": row["include_exercises"],
+                        "include_visual_aids": row["include_visual_aids"],
                         "created_at": row["created_at"],
                         "updated_at": row["updated_at"],
-                        "book_title": row["book_title"]
+                        "book_title": row["book_title"],
+                        "curriculum_name": row["curriculum_name"]
                     })
             
             return scripts
@@ -4658,3 +4888,315 @@ Always end with: (Source: Internal Knowledge Base)
         except Exception as e:
             logger.error(f"Error deleting lecture script {script_id}: {e}")
             raise e
+
+    # Enhanced Curriculum Script Generation Methods
+    async def generate_curriculum_script(self, request: dict) -> str:
+        """Generate script based on curriculum scope (Case 1, 2, or 3)"""
+        try:
+            scope = request.get('scope', 'whole_curriculum')
+            
+            if scope == 'whole_curriculum':
+                return await self._generate_curriculum_script(request)
+            elif scope == 'whole_book':
+                return await self._generate_book_script(request)
+            elif scope == 'specific_topics':
+                return await self._generate_topic_script(request)
+            else:
+                raise ValueError(f"Invalid scope: {scope}")
+                
+        except Exception as e:
+            logger.error(f"Error generating curriculum script: {e}")
+            raise e
+
+    async def _generate_curriculum_script(self, request: dict) -> str:
+        """Case 1: Generate script covering whole curriculum"""
+        try:
+            curriculum_id = request['curriculum_id']
+            title = request.get('title', 'Comprehensive Curriculum Overview')
+            detail_level = request.get('detail_level', 'overview')
+            
+            logger.info(f"Generating Case 1 script for curriculum {curriculum_id}")
+            
+            # Step 1: Extract curriculum-wide topics
+            curriculum_topics = await self._extract_curriculum_wide_topics(curriculum_id)
+            
+            if not curriculum_topics:
+                raise ValueError("No topics found in curriculum")
+            
+            # Step 2: Get books in curriculum
+            curriculum_books = await self._get_curriculum_books(curriculum_id)
+            book_titles = [book['title'] for book in curriculum_books]
+            
+            # Step 3: Generate comprehensive script
+            script_prompt = f"""Create a comprehensive lecture script covering the entire curriculum with these specifications:
+
+**Title:** {title}
+**Scope:** Whole Curriculum ({len(curriculum_books)} books)
+**Detail Level:** {detail_level}
+**Books Covered:** {', '.join(book_titles)}
+
+**Key Topics to Address:**
+{chr(10).join(f"- {topic}" for topic in curriculum_topics[:20])}
+
+**Instructions:**
+1. Create an executive overview that ties together all curriculum components
+2. Structure the content to show connections between different subject areas
+3. Include strategic insights that span multiple books/topics
+4. Provide a roadmap for comprehensive understanding
+5. Use {detail_level} level of detail throughout
+
+**Format:**
+# LECTURE SCRIPT: {title}
+
+## I. CURRICULUM OVERVIEW
+[Comprehensive introduction covering the full scope]
+
+## II. INTEGRATED LEARNING FRAMEWORK
+[How all components work together]
+
+## III. CORE COMPETENCY AREAS
+[Major topic clusters with cross-references]
+
+## IV. STRATEGIC INSIGHTS
+[High-level connections and applications]
+
+## V. IMPLEMENTATION ROADMAP
+[How to approach this comprehensive curriculum]
+
+## VI. CONCLUSION
+[Synthesis and next steps]
+
+Generate a professional, comprehensive script that demonstrates mastery across the entire curriculum."""
+            
+            # Use direct LLM call for better control
+            script_content = await self.llm.ainvoke(script_prompt)
+            return script_content.content if hasattr(script_content, 'content') else str(script_content)
+            
+        except Exception as e:
+            logger.error(f"Error generating curriculum script: {e}")
+            raise e
+
+    async def _generate_book_script(self, request: dict) -> str:
+        """Case 2: Generate script for whole book"""
+        try:
+            curriculum_id = request['curriculum_id']
+            book_ids = request['specific_books']
+            title = request.get('title', 'Comprehensive Book Analysis')
+            detail_level = request.get('detail_level', 'detailed')
+            
+            if not book_ids:
+                raise ValueError("No books specified")
+            
+            logger.info(f"Generating Case 2 script for book(s) {book_ids}")
+            
+            # Step 1: Get book details
+            book_details = []
+            for book_id in book_ids:
+                book_info = await self._get_book_info(book_id)
+                if book_info:
+                    book_details.append(book_info)
+            
+            if not book_details:
+                raise ValueError("No valid books found")
+            
+            # Step 2: Extract topics from all book TOCs
+            all_topics = []
+            for book in book_details:
+                toc_topics = await self._extract_topics_from_book_toc(book['title'])
+                all_topics.extend(toc_topics)
+            
+            # Remove duplicates and get unique topics
+            unique_topics = list(set(all_topics))
+            
+            # Step 3: Generate focused book script
+            book_titles = [book['title'] for book in book_details]
+            
+            script_prompt = f"""Create a comprehensive lecture script for the specified book(s):
+
+**Title:** {title}
+**Scope:** Whole Book Analysis
+**Detail Level:** {detail_level}
+**Book(s):** {', '.join(book_titles)}
+
+**Key Topics from Book TOC:**
+{chr(10).join(f"- {topic}" for topic in unique_topics[:25])}
+
+**Instructions:**
+1. Provide deep, focused coverage of the book content
+2. Organize by major themes and chapters
+3. Include specific examples and detailed explanations
+4. Use {detail_level} level of analysis throughout
+5. Create practical learning applications
+
+**Format:**
+# LECTURE SCRIPT: {title}
+
+## I. BOOK OVERVIEW
+[Introduction to the book's scope and objectives]
+
+## II. FOUNDATIONAL CONCEPTS
+[Core principles and theories]
+
+## III. DETAILED ANALYSIS
+[Chapter-by-chapter or theme-based coverage]
+
+## IV. PRACTICAL APPLICATIONS
+[Real-world examples and case studies]
+
+## V. CRITICAL INSIGHTS
+[Key takeaways and important concepts]
+
+## VI. SYNTHESIS & CONCLUSIONS
+[Integration and next steps]
+
+Focus on providing comprehensive, detailed coverage that demonstrates deep understanding of the book content."""
+            
+            # Use direct LLM call
+            script_content = await self.llm.ainvoke(script_prompt)
+            return script_content.content if hasattr(script_content, 'content') else str(script_content)
+            
+        except Exception as e:
+            logger.error(f"Error generating book script: {e}")
+            raise e
+
+    async def _generate_topic_script(self, request: dict) -> str:
+        """Case 3: Generate script for specific topics"""
+        try:
+            curriculum_id = request['curriculum_id']
+            book_ids = request.get('specific_books', [])
+            topics = request.get('specific_topics', '')
+            title = request.get('title', 'Focused Topic Analysis')
+            detail_level = request.get('detail_level', 'detailed')
+            
+            if not topics.strip():
+                raise ValueError("No specific topics provided")
+            
+            logger.info(f"Generating Case 3 script for topics: {topics}")
+            
+            # Step 1: Parse and clean topics
+            topic_list = [topic.strip() for topic in topics.split(',') if topic.strip()]
+            
+            # Step 2: Get context from specified books or curriculum
+            context_books = []
+            if book_ids:
+                for book_id in book_ids:
+                    book_info = await self._get_book_info(book_id)
+                    if book_info:
+                        context_books.append(book_info['title'])
+            else:
+                # If no specific books, get curriculum overview
+                curriculum_books = await self._get_curriculum_books(curriculum_id)
+                context_books = [book['title'] for book in curriculum_books[:5]]  # Limit for focus
+            
+            # Step 3: Generate topic-focused script
+            script_prompt = f"""Create a comprehensive lecture script focused on specific topics:
+
+**Title:** {title}
+**Scope:** Specific Topics Analysis
+**Detail Level:** {detail_level}
+**Target Topics:** {', '.join(topic_list)}
+**Context Books:** {', '.join(context_books)}
+
+**Instructions:**
+1. Focus exclusively on the specified topics
+2. Provide deep, detailed analysis of each topic
+3. Show connections between related topics
+4. Include practical examples and applications
+5. Use {detail_level} level of depth throughout
+
+**Format:**
+# LECTURE SCRIPT: {title}
+
+## I. TOPIC OVERVIEW
+[Introduction to the specific topics covered]
+
+## II. DETAILED TOPIC ANALYSIS
+{chr(10).join(f"### {topic}" for topic in topic_list)}
+[Comprehensive coverage of each topic]
+
+## III. INTERCONNECTIONS
+[How these topics relate to each other]
+
+## IV. PRACTICAL APPLICATIONS
+[Real-world uses and examples]
+
+## V. ADVANCED CONCEPTS
+[Deeper insights and complex aspects]
+
+## VI. SUMMARY & INTEGRATION
+[Key takeaways and synthesis]
+
+Provide focused, detailed coverage that demonstrates expertise in the specified topics."""
+            
+            # Use direct LLM call
+            script_content = await self.llm.ainvoke(script_prompt)
+            return script_content.content if hasattr(script_content, 'content') else str(script_content)
+            
+        except Exception as e:
+            logger.error(f"Error generating topic script: {e}")
+            raise e
+
+    async def _get_book_info(self, book_id: int) -> Optional[Dict[str, Any]]:
+        """Get book information by book ID"""
+        try:
+            book_info = await self.db.get_book_by_id(book_id)
+            if not book_info:
+                logger.warning(f"No book found with ID: {book_id}")
+                return None
+            
+            return {
+                'id': book_info['id'],
+                'title': book_info['title'],
+                'author': book_info.get('author'),
+                'curriculum_id': book_info['curriculum_id'],
+                'curriculum_name': book_info.get('curriculum_name'),
+                'file_name': book_info.get('file_name'),
+                'publication_year': book_info.get('publication_year')
+            }
+        except Exception as e:
+            logger.error(f"Error getting book info for ID {book_id}: {e}")
+            return None
+
+    async def _get_curriculum_books(self, curriculum_id: int) -> List[Dict[str, Any]]:
+        """Get all books in a curriculum"""
+        try:
+            books = await self.db.get_books_by_curriculum(curriculum_id)
+            if not books:
+                logger.warning(f"No books found for curriculum ID: {curriculum_id}")
+                return []
+                
+            return [
+                {
+                    'id': book['id'],
+                    'title': book['title'],
+                    'author': book.get('author'),
+                    'curriculum_id': book['curriculum_id'],
+                    'file_name': book.get('file_name'),
+                    'publication_year': book.get('publication_year')
+                }
+                for book in books
+            ]
+        except Exception as e:
+            logger.error(f"Error getting curriculum books for ID {curriculum_id}: {e}")
+            return []
+
+    async def _extract_topics_from_book_toc(self, book_title: str) -> List[str]:
+        """Extract topics from a book's table of contents"""
+        try:
+            # Get book and curriculum info
+            book_info = await self._get_book_curriculum_info(book_title)
+            if not book_info:
+                logger.warning(f"Book '{book_title}' not found for TOC extraction")
+                return []
+            
+            curriculum_name = book_info.get('curriculum_name', 'Unknown')
+            
+            # Use existing method to extract book topics
+            topics = await self._extract_book_topics(curriculum_name, book_title)
+            
+            logger.info(f"Extracted {len(topics)} topics from '{book_title}' TOC")
+            return topics
+            
+        except Exception as e:
+            logger.error(f"Error extracting TOC topics from '{book_title}': {e}")
+            return []
