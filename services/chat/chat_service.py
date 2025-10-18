@@ -342,62 +342,60 @@ Remember: Your credibility depends on being honest about your knowledge boundari
             return []
 
     async def _handle_educational_chat(self, user_message: str, session_id: str, curriculum_context: str, book_title: str = None) -> str:
-        """Handle educational chat with STRICT RAG + MEMORY - only answer from vector database with conversation context"""
+        """Handle educational chat with STRICT RAG + MEMORY - using LangChain message format like backup"""
         try:
             logger.info(f"📚 STRICT RAG MODE with MEMORY: Searching curriculum '{curriculum_context}'")
             
-            # STEP 1: Retrieve conversation history for context
-            chat_history = await self.get_chat_history(session_id, limit=10)
+            # STEP 1: RETRIEVE CONVERSATION MEMORY (from DB) - Like backup file
+            # Get chat history as LangChain message objects
+            chat_history = await self._get_session_chat_history(session_id, limit=10)
             
-            # Format history for LLM context (last 3 exchanges = 6 messages)
-            history_text = ""
-            if chat_history and len(chat_history) > 0:
-                history_messages = []
-                for msg in chat_history[-6:]:  # Last 6 messages (3 user + 3 assistant)
-                    if msg.message_type == MessageType.USER:
-                        history_messages.append(f"User: {msg.content}")
-                    elif msg.message_type == MessageType.ASSISTANT:
-                        history_messages.append(f"Assistant: {msg.content}")
-                
-                if history_messages:
-                    history_text = "\n".join(history_messages)
-                    logger.info(f"💭 Using {len(history_messages)} previous messages for context")
+            logger.info(f"💭 Retrieved {len(chat_history)} messages from conversation history")
             
-            # STEP 2: Enhance search query using conversation context for follow-up questions
+            # STEP 2: INTELLIGENT QUERY REWRITING (if there's conversation history)
+            # Use LLM to understand what the user is actually asking about based on context
             search_query = user_message
-            
-            # Detect follow-up questions that need context from history
-            follow_up_indicators = [
-                "it", "that", "this", "explain again", "more detail", "simpler", 
-                "don't understand", "dnot understand", "elaborate", "clarify",
-                "more about", "tell me more", "what about", "how about"
-            ]
-            
-            is_follow_up = any(indicator in user_message.lower() for indicator in follow_up_indicators)
-            
-            if is_follow_up and history_text:
-                # Extract the main topic from previous conversation
-                logger.info(f"🔄 Detected follow-up question, enhancing search query with context")
+            if chat_history:
+                # Build conversation context for query rewriting
+                history_for_rewrite = []
+                for msg in chat_history[-4:]:  # Last 4 messages for context
+                    role = "Student" if isinstance(msg, HumanMessage) else "Tutor"
+                    history_for_rewrite.append(f"{role}: {msg.content[:200]}")  # Limit length
                 
-                # Get the last user question to extract topic
-                previous_user_messages = [msg.content for msg in chat_history[-6:] if msg.message_type == MessageType.USER]
+                history_text = "\n".join(history_for_rewrite)
                 
-                if len(previous_user_messages) > 1:
-                    # Use the previous user question as search context
-                    previous_question = previous_user_messages[-2]  # Second to last (current is last)
-                    search_query = f"{previous_question} {user_message}"
-                    logger.info(f"🔍 Enhanced search query: '{search_query[:100]}...'")
+                # Use LLM to rewrite query if it contains references (it, that, this, etc.)
+                rewrite_prompt = f"""Given this conversation history:
+
+{history_text}
+
+Current user question: "{user_message}"
+
+If the user's question contains pronouns or references (like "it", "that", "this", "explain again", "more details", etc.), rewrite it as a standalone search query that captures the actual topic being discussed.
+
+If the question is already clear and standalone, return it as-is.
+
+Return ONLY the rewritten query, nothing else."""
+
+                try:
+                    rewrite_chain = self.simple_chat_prompt | self.llm | StrOutputParser()
+                    search_query = await rewrite_chain.ainvoke({"user_message": rewrite_prompt})
+                    search_query = search_query.strip()
+                    logger.info(f"🔄 Rewrote query: '{user_message[:50]}...' → '{search_query[:50]}...'")
+                except Exception as e:
+                    logger.warning(f"⚠️ Query rewrite failed, using original: {e}")
+                    search_query = user_message
             
-            # STEP 3: Search vector database for relevant chunks
+            # STEP 3: Search vector database with the intelligent query
             retrieved_chunks = await self._search_curriculum_embeddings(
                 curriculum_name=curriculum_context,
-                query=search_query,
+                query=search_query,  # Use rewritten query for better retrieval
                 k=6  # Retrieve top 6 most relevant chunks
             )
             
             # STEP 4: Check if we found relevant content
             if not retrieved_chunks:
-                logger.warning(f"❌ No relevant content found in vector database for query: {search_query[:100]}")
+                logger.warning(f"❌ No relevant content found in vector database for query: {user_message[:100]}")
                 return "I apologize, but I couldn't find any relevant information about your question in the available curriculum materials. Please try rephrasing your question or ask about topics covered in the curriculum content.\n\n(Source: Internal Knowledge Base)"
             
             logger.info(f"✅ Found {len(retrieved_chunks)} relevant chunks from vector database")
@@ -435,11 +433,21 @@ Remember: Your credibility depends on being honest about your knowledge boundari
             
             combined_context = "\n\n".join(context_parts)
             
-            # STEP 6: Create enhanced prompt WITH conversation history and STRICT instructions
-            if history_text:
+            # STEP 6: Build conversation history context from LangChain messages
+            history_context = ""
+            if chat_history:
+                history_lines = []
+                for msg in chat_history:
+                    role = "Student" if isinstance(msg, HumanMessage) else "Tutor"
+                    history_lines.append(f"{role}: {msg.content}")
+                history_context = "\n".join(history_lines)
+                logger.info(f"💬 Including {len(chat_history)} messages as conversation context")
+            
+            # STEP 7: Create enhanced prompt WITH conversation history and STRICT instructions
+            if history_context:
                 # Include conversation history for context-aware responses
                 enhanced_message = f"""**CONVERSATION HISTORY:**
-{history_text}
+{history_context}
 
 **CURRICULUM KNOWLEDGE BASE CONTENT:**
 {combined_context}
@@ -473,11 +481,11 @@ Please provide a comprehensive answer using ONLY the information from the curric
 
 Please provide a comprehensive answer using ONLY the information from the curriculum content above."""
             
-            # STEP 7: Generate response using ONLY the retrieved content with conversation awareness
+            # STEP 8: Generate response using ONLY the retrieved content with conversation awareness
             chain = self.simple_chat_prompt | self.llm | StrOutputParser()
             result = await chain.ainvoke({"user_message": enhanced_message})
             
-            # STEP 8: Verify the response includes the citation
+            # STEP 9: Verify the response includes the citation
             if "(Source: Internal Knowledge Base)" not in result:
                 result += "\n\n(Source: Internal Knowledge Base)"
             
