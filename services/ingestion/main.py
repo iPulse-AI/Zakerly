@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 # Add shared modules to path
 sys.path.append('/app/shared')
 
-from models import BookModel, BookMetadata, HealthCheck, ErrorResponse, CurriculumModel, CurriculumCreateRequest
+from models import BookModel, BookMetadata, HealthCheck, CurriculumModel, CurriculumCreateRequest
 from database import get_database, DatabaseManager
 from utils import setup_logging, get_redis
 from ingestion_service import IngestionService

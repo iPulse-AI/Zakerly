@@ -26,15 +26,6 @@ CREATE TABLE IF NOT EXISTS curriculum (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Insert limited curriculums (maximum 5)
-INSERT INTO curriculum (name, description, created_by) VALUES 
-    ('Computer Science', 'Computer science, programming, and technology', 'user'),
-    ('Mathematics', 'Mathematics and related mathematical concepts', 'user'),
-    ('Science', 'General science and scientific principles', 'user'),
-    ('Business', 'Business, economics, and management', 'user'),
-    ('General Studies', 'General academic content and miscellaneous topics', 'user')
-ON CONFLICT (name) DO NOTHING;
-
 -- Create books table (curriculum-only system)
 CREATE TABLE IF NOT EXISTS books (
     id SERIAL PRIMARY KEY,
@@ -56,8 +47,11 @@ CREATE TABLE IF NOT EXISTS books (
 CREATE TABLE IF NOT EXISTS chat_sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL,
-    book_id INTEGER NOT NULL,
+    book_id INTEGER,
     session_name VARCHAR(255),
+    session_type VARCHAR(50) CHECK (session_type IN ('book', 'curriculum')),
+    curriculum_name VARCHAR(255),
+    book_title VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_user
@@ -77,6 +71,18 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     metadata JSONB,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_session
+        FOREIGN KEY (session_id)
+        REFERENCES chat_sessions(id) ON DELETE CASCADE
+);
+
+-- Create chat_history table for LangChain compatibility
+CREATE TABLE IF NOT EXISTS chat_history (
+    id SERIAL PRIMARY KEY,
+    session_id UUID NOT NULL,
+    message TEXT NOT NULL,
+    message_type VARCHAR(50) NOT NULL CHECK (message_type IN ('human', 'ai', 'system', 'user', 'assistant')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_chat_history_session
         FOREIGN KEY (session_id)
         REFERENCES chat_sessions(id) ON DELETE CASCADE
 );
@@ -129,6 +135,8 @@ CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_id ON chat_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_book_id ON chat_sessions(book_id);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON chat_messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_created_at ON chat_messages(created_at);
+CREATE INDEX IF NOT EXISTS idx_chat_history_session_id ON chat_history(session_id);
+CREATE INDEX IF NOT EXISTS idx_chat_history_created_at ON chat_history(created_at);
 CREATE INDEX IF NOT EXISTS idx_session_memory_session_type ON session_memory(session_id, memory_type);
 CREATE INDEX IF NOT EXISTS idx_session_memory_expires ON session_memory(expires_at) WHERE expires_at IS NOT NULL;
 

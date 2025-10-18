@@ -68,6 +68,8 @@ app.add_middleware(
 INGESTION_SERVICE_URL = os.getenv("INGESTION_SERVICE_URL", "http://ingestion-service:8000")
 CHAT_SERVICE_URL = os.getenv("CHAT_SERVICE_URL", "http://chat-service:8000")
 AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8000")
+EXAM_SERVICE_URL = os.getenv("EXAM_SERVICE_URL", "http://exam-service:8000")
+SCRIPT_SERVICE_URL = os.getenv("SCRIPT_SERVICE_URL", "http://script-service:8000")
 
 class RateLimiter:
     """Simple rate limiter using Redis"""
@@ -215,23 +217,6 @@ async def list_books(curriculum_id: int = None, category_id: int = None):
         raise
     except Exception as e:
         logger.error(f"Error in list books endpoint: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/v1/categories", dependencies=[Depends(check_rate_limit)])
-async def list_categories():
-    """List categories"""
-    try:
-        result = await forward_request(
-            INGESTION_SERVICE_URL,
-            "/categories",
-            method="GET"
-        )
-        return result
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error in list categories endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Curriculum Endpoints
@@ -397,10 +382,10 @@ async def chat(request: ChatRequest):
 
 @app.post("/api/v1/generate-questions", dependencies=[Depends(check_rate_limit)])
 async def generate_questions(request: QuestionGenerationRequest):
-    """Generate questions"""
+    """Generate questions - routed to exam service"""
     try:
         result = await forward_request(
-            CHAT_SERVICE_URL,
+            EXAM_SERVICE_URL,
             "/generate-questions",
             method="POST",
             data=request.dict()
@@ -416,10 +401,10 @@ async def generate_questions(request: QuestionGenerationRequest):
 
 @app.post("/api/v1/generate-lecture", dependencies=[Depends(check_rate_limit)])
 async def generate_lecture(request: LectureRequest):
-    """Generate lecture"""
+    """Generate lecture - routed to script service"""
     try:
         result = await forward_request(
-            CHAT_SERVICE_URL,
+            SCRIPT_SERVICE_URL,
             "/generate-lecture",
             method="POST",
             data=request.dict()
@@ -575,6 +560,20 @@ async def get_system_status():
         except:
             status["services"]["auth"] = "unhealthy"
         
+        # Check exam service
+        try:
+            await forward_request(EXAM_SERVICE_URL, "/health", method="GET")
+            status["services"]["exam"] = "healthy"
+        except:
+            status["services"]["exam"] = "unhealthy"
+        
+        # Check script service
+        try:
+            await forward_request(SCRIPT_SERVICE_URL, "/health", method="GET")
+            status["services"]["script"] = "healthy"
+        except:
+            status["services"]["script"] = "unhealthy"
+        
         return status
         
     except Exception as e:
@@ -677,13 +676,13 @@ async def verify_token(request: Request):
 # Enhanced Curriculum Script Generation Endpoint
 @app.post("/api/v1/curriculum-scripts/generate", dependencies=[Depends(check_rate_limit)])
 async def generate_curriculum_script(request: Request, user_id: str):
-    """Generate script based on curriculum scope (whole_curriculum, whole_book, specific_topics)"""
+    """Generate script based on curriculum scope - routed to script service"""
     try:
         data = await request.json()
         params = {"user_id": user_id}
         
         result = await forward_request(
-            CHAT_SERVICE_URL,
+            SCRIPT_SERVICE_URL,
             "/curriculum-scripts/generate",
             method="POST",
             data=data,
@@ -701,13 +700,13 @@ async def generate_curriculum_script(request: Request, user_id: str):
 # Lecture Scripts Endpoints
 @app.post("/api/v1/scripts", dependencies=[Depends(check_rate_limit)])
 async def create_script(request: Request, user_id: str):
-    """Create a new lecture script"""
+    """Create a new lecture script - routed to script service"""
     try:
         data = await request.json()
         params = {"user_id": user_id}
         
         result = await forward_request(
-            CHAT_SERVICE_URL,
+            SCRIPT_SERVICE_URL,
             "/scripts",
             method="POST",
             data=data,
@@ -724,11 +723,11 @@ async def create_script(request: Request, user_id: str):
 
 @app.get("/api/v1/scripts/{script_id}", dependencies=[Depends(check_rate_limit)])
 async def get_script(script_id: str, user_id: str):
-    """Get a specific lecture script by ID"""
+    """Get a specific lecture script by ID - routed to script service"""
     try:
         params = {"user_id": user_id}
         result = await forward_request(
-            CHAT_SERVICE_URL,
+            SCRIPT_SERVICE_URL,
             f"/scripts/{script_id}",
             method="GET",
             params=params
@@ -744,10 +743,10 @@ async def get_script(script_id: str, user_id: str):
 
 @app.get("/api/v1/users/{user_id}/scripts", dependencies=[Depends(check_rate_limit)])
 async def get_user_scripts(user_id: str):
-    """Get all lecture scripts for a user"""
+    """Get all lecture scripts for a user - routed to script service"""
     try:
         result = await forward_request(
-            CHAT_SERVICE_URL,
+            SCRIPT_SERVICE_URL,
             f"/users/{user_id}/scripts",
             method="GET"
         )
@@ -762,13 +761,13 @@ async def get_user_scripts(user_id: str):
 
 @app.put("/api/v1/scripts/{script_id}", dependencies=[Depends(check_rate_limit)])
 async def update_script(script_id: str, request: Request, user_id: str):
-    """Update a lecture script"""
+    """Update a lecture script - routed to script service"""
     try:
         data = await request.json()
         params = {"user_id": user_id}
         
         result = await forward_request(
-            CHAT_SERVICE_URL,
+            SCRIPT_SERVICE_URL,
             f"/scripts/{script_id}",
             method="PUT",
             data=data,
@@ -785,11 +784,11 @@ async def update_script(script_id: str, request: Request, user_id: str):
 
 @app.delete("/api/v1/scripts/{script_id}", dependencies=[Depends(check_rate_limit)])
 async def delete_script(script_id: str, user_id: str):
-    """Delete a lecture script"""
+    """Delete a lecture script - routed to script service"""
     try:
         params = {"user_id": user_id}
         result = await forward_request(
-            CHAT_SERVICE_URL,
+            SCRIPT_SERVICE_URL,
             f"/scripts/{script_id}",
             method="DELETE",
             params=params

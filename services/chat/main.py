@@ -13,12 +13,10 @@ from typing import List
 sys.path.append('/app/shared')
 
 from models import (
-    ChatRequest, ChatResponse, QuestionGenerationRequest, QuestionResponse,
-    LectureRequest, LectureScript, LectureScriptRequest, LectureScriptUpdate,
-    CurriculumScriptRequest, HealthCheck, ChatSessionModel
+    ChatRequest, ChatResponse, HealthCheck, ChatSessionModel
 )
 from database import get_database, DatabaseManager
-from utils import setup_logging, get_redis, generate_session_id
+from utils import setup_logging, get_redis
 from chat_service import ChatService
 
 # Setup logging
@@ -99,44 +97,6 @@ async def chat(
         logger.error(f"Error handling chat request: {e}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-@app.post("/generate-questions", response_model=QuestionResponse)
-async def generate_questions(
-    request: QuestionGenerationRequest,
-    chat_service: ChatService = Depends(get_chat_service)
-):
-    """Generate questions for a book"""
-    try:
-        logger.info(f"Question generation request for book: {request.book_title}")
-        
-        response = await chat_service.generate_questions(request)
-        
-        return response
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error generating questions: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-@app.post("/generate-lecture")
-async def generate_lecture(
-    request: LectureRequest,
-    chat_service: ChatService = Depends(get_chat_service)
-):
-    """Generate lecture for a book topic"""
-    try:
-        logger.info(f"Lecture generation request for book: {request.book_title}")
-        
-        response = await chat_service.generate_lecture(request)
-        
-        return {"lecture": response}
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error generating lecture: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
 @app.post("/sessions", response_model=ChatSessionModel)
 async def create_session(
     user_id: str,
@@ -147,14 +107,16 @@ async def create_session(
 ):
     """Create new chat session - supports both curriculum-based and book-based sessions"""
     try:
-        if curriculum_name:
-            # Create curriculum-based session
-            session = await chat_service.create_curriculum_session(user_id, curriculum_name, session_name)
-        elif book_title:
-            # Create book-based session (legacy support)
-            session = await chat_service.create_session(user_id, book_title, session_name)
-        else:
+        if not curriculum_name and not book_title:
             raise HTTPException(status_code=400, detail="Either curriculum_name or book_title must be provided")
+        
+        # Use unified create_chat_session method
+        session = await chat_service.create_chat_session(
+            user_id=user_id,
+            curriculum_name=curriculum_name,
+            book_title=book_title,
+            session_name=session_name
+        )
         
         return session
         
@@ -171,7 +133,7 @@ async def get_session(
 ):
     """Get chat session by ID"""
     try:
-        session = await chat_service.get_session(session_id)
+        session = await chat_service.get_chat_session(session_id)
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
         return session
@@ -297,142 +259,6 @@ async def cleanup_expired_memories(
         return result
     except Exception as e:
         logger.error(f"Error cleaning up expired memories: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-# Lecture Scripts endpoints
-@app.post("/scripts")
-async def create_script(
-    request: LectureScriptRequest,
-    user_id: str,
-    chat_service: ChatService = Depends(get_chat_service)
-):
-    """Create a new lecture script"""
-    try:
-        script = await chat_service.create_lecture_script(user_id, request)
-        return script
-    except Exception as e:
-        logger.error(f"Error creating script: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-@app.get("/scripts/{script_id}")
-async def get_script(
-    script_id: str,
-    user_id: str,
-    chat_service: ChatService = Depends(get_chat_service)
-):
-    """Get a specific lecture script by ID"""
-    try:
-        script = await chat_service.get_lecture_script(script_id, user_id)
-        if not script:
-            raise HTTPException(status_code=404, detail="Script not found")
-        return script
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting script {script_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-@app.get("/users/{user_id}/scripts")
-async def get_user_scripts(
-    user_id: str,
-    chat_service: ChatService = Depends(get_chat_service)
-):
-    """Get all lecture scripts for a user"""
-    try:
-        scripts = await chat_service.get_user_scripts(user_id)
-        return scripts
-    except Exception as e:
-        logger.error(f"Error getting user scripts: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-@app.put("/scripts/{script_id}")
-async def update_script(
-    script_id: str,
-    request: LectureScriptUpdate,
-    user_id: str,
-    chat_service: ChatService = Depends(get_chat_service)
-):
-    """Update a lecture script"""
-    try:
-        script = await chat_service.update_lecture_script(script_id, user_id, request)
-        if not script:
-            raise HTTPException(status_code=404, detail="Script not found")
-        return script
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error updating script {script_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-@app.delete("/scripts/{script_id}")
-async def delete_script(
-    script_id: str,
-    user_id: str,
-    chat_service: ChatService = Depends(get_chat_service)
-):
-    """Delete a lecture script"""
-    try:
-        success = await chat_service.delete_lecture_script(script_id, user_id)
-        if not success:
-            raise HTTPException(status_code=404, detail="Script not found")
-        return {"message": "Script deleted successfully"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error deleting script {script_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-# Enhanced Curriculum Script Generation endpoint
-@app.post("/curriculum-scripts/generate")
-async def generate_curriculum_script(
-    request: CurriculumScriptRequest,
-    user_id: str,
-    chat_service: ChatService = Depends(get_chat_service)
-):
-    """Generate script based on curriculum scope (whole_curriculum, whole_book, specific_topics)"""
-    try:
-        logger.info(f"Received curriculum script request: {request}")
-        logger.info(f"User ID: {user_id}")
-        
-        # Validate request fields
-        if not request.curriculum_id:
-            raise HTTPException(status_code=422, detail="curriculum_id is required")
-        if not request.title:
-            raise HTTPException(status_code=422, detail="title is required")
-        if not request.scope:
-            raise HTTPException(status_code=422, detail="scope is required")
-        if request.scope not in ['whole_curriculum', 'whole_book', 'specific_topics']:
-            raise HTTPException(status_code=422, detail="scope must be one of: whole_curriculum, whole_book, specific_topics")
-        
-        # Convert request to dict for the service method
-        request_dict = {
-            'curriculum_id': request.curriculum_id,
-            'title': request.title,
-            'scope': request.scope,
-            'specific_books': request.specific_books,
-            'specific_topics': request.specific_topics,
-            'detail_level': request.detail_level,
-            'difficulty': request.difficulty,
-            'duration': request.duration
-        }
-        
-        logger.info(f"Processing curriculum script generation with: {request_dict}")
-        
-        script_content = await chat_service.generate_curriculum_script(request_dict)
-        
-        return {
-            "script_content": script_content,
-            "title": request.title,
-            "scope": request.scope,
-            "curriculum_id": request.curriculum_id,
-            "generated_at": datetime.now().isoformat()
-        }
-        
-    except ValueError as e:
-        logger.error(f"Validation error generating curriculum script: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error generating curriculum script: {e}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 if __name__ == "__main__":

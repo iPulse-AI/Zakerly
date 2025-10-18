@@ -104,26 +104,6 @@ class RedisManager:
             logger.error(f"Failed to delete cache: {e}")
             return False
 
-    def set_session(self, session_id: str, data: Dict[str, Any], expire_hours: int = 24):
-        """Set session data"""
-        expire_seconds = expire_hours * 3600
-        return self.set_cache(f"session:{session_id}", data, expire_seconds)
-
-    def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """Get session data"""
-        return self.get_cache(f"session:{session_id}")
-
-    def extend_session(self, session_id: str, expire_hours: int = 24):
-        """Extend session expiration"""
-        if not self.client:
-            return False
-        try:
-            expire_seconds = expire_hours * 3600
-            return self.client.expire(f"session:{session_id}", expire_seconds)
-        except Exception as e:
-            logger.error(f"Failed to extend session: {e}")
-            return False
-
 # Global Redis instance
 redis_manager: Optional[RedisManager] = None
 
@@ -162,10 +142,3 @@ def generate_session_id() -> str:
     import uuid
     return str(uuid.uuid4())
 
-def format_timestamp(dt: datetime) -> str:
-    """Format datetime for API responses"""
-    return dt.isoformat()
-
-def parse_timestamp(timestamp_str: str) -> datetime:
-    """Parse timestamp string to datetime"""
-    return datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))

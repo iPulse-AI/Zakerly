@@ -99,6 +99,48 @@ services:
     networks:
       - zakerly_network
 
+  # Exam Service
+  exam-service:
+    build:
+      context: .
+      dockerfile: ./services/exam/Dockerfile
+    container_name: zakerly_exam
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://zakerly_user:zakerly_password@postgres:5432/zakerly_db
+      - REDIS_URL=redis://redis:6379
+    ports:
+      - "8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - zakerly_network
+
+  # Script Service
+  script-service:
+    build:
+      context: .
+      dockerfile: ./services/script/Dockerfile
+    container_name: zakerly_script
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://zakerly_user:zakerly_password@postgres:5432/zakerly_db
+      - REDIS_URL=redis://redis:6379
+    ports:
+      - "8004:8004"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - zakerly_network
+
   # Authentication Service
   auth-service:
     build:
@@ -111,7 +153,7 @@ services:
       - DATABASE_URL=postgresql://zakerly_user:zakerly_password@postgres:5432/zakerly_db
       - JWT_SECRET=${JWT_SECRET:-your-secret-key-change-in-production}
     ports:
-      - "8003:8000"
+      - "8005:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -128,12 +170,16 @@ services:
       - INGESTION_SERVICE_URL=http://ingestion-service:8000
       - CHAT_SERVICE_URL=http://chat-service:8000
       - AUTH_SERVICE_URL=http://auth-service:8000
+      - EXAM_SERVICE_URL=http://exam-service:8003
+      - SCRIPT_SERVICE_URL=http://script-service:8004
       - REDIS_URL=redis://redis:6379
     ports:
       - "8000:8000"
     depends_on:
       - ingestion-service
       - chat-service
+      - exam-service
+      - script-service
       - auth-service
     networks:
       - zakerly_network

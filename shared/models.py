@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
@@ -22,13 +22,6 @@ class BookModel(BaseModel):
     file_name: str
     created_at: Optional[datetime] = None
 
-class BookUploadRequest(BaseModel):
-    file_content: bytes = Field(..., description="File content as bytes")
-    file_name: str = Field(..., description="Original filename")
-    mime_type: str = Field(..., description="MIME type of the file")
-    curriculum_id: Optional[int] = Field(None, description="Curriculum ID - required for new system")
-    curriculum_name: Optional[str] = Field(None, description="Curriculum name - for creating new curriculum")
-
 class BookMetadata(BaseModel):
     curriculum_id: int
     curriculum_name: str
@@ -45,12 +38,15 @@ class MessageType(str, Enum):
 class ChatSessionModel(BaseModel):
     id: Optional[str] = None
     user_id: str
-    book_id: int
+    book_id: Optional[int] = None
     session_name: Optional[str] = None
+    session_type: Optional[str] = None
+    curriculum_name: Optional[str] = None
+    book_title: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     
-    @field_validator('id', mode='before')
+    @validator('id', pre=True)
     @classmethod
     def convert_uuid_to_string(cls, v):
         if isinstance(v, uuid.UUID):
@@ -123,14 +119,14 @@ class LectureScript(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     
-    @field_validator('id', mode='before')
+    @validator('id', pre=True)
     @classmethod
     def convert_uuid_to_string(cls, v):
         if isinstance(v, uuid.UUID):
             return str(v)
         return v
     
-    @field_validator('user_id', mode='before')
+    @validator('user_id', pre=True)
     @classmethod
     def convert_user_id_to_string(cls, v):
         if isinstance(v, uuid.UUID):
@@ -161,21 +157,6 @@ class CurriculumCreateRequest(BaseModel):
     name: str = Field(..., description="Curriculum name")
     description: Optional[str] = Field(None, description="Curriculum description")
     created_by: str = Field('user', description="Who created this curriculum")
-
-class CurriculumUpdateRequest(BaseModel):
-    name: Optional[str] = Field(None, description="Curriculum name")
-    description: Optional[str] = Field(None, description="Curriculum description")
-
-class BookWithCurriculum(BaseModel):
-    id: int
-    curriculum_id: int
-    curriculum_name: str
-    title: str
-    author: Optional[str] = None
-    publication_year: Optional[int] = None
-    file_hash: str
-    file_name: str
-    created_at: datetime
 
 class HealthCheck(BaseModel):
     status: str
