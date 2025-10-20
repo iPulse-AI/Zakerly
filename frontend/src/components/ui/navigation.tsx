@@ -8,6 +8,7 @@ import {
   FileText, 
   GraduationCap,
   Presentation,
+  Projector,
   BarChart3
 } from 'lucide-react';
 
@@ -17,7 +18,8 @@ const navItems = [
   { to: '/books', icon: BookOpen, label: 'My Books' },
   { to: '/chat', icon: MessageSquare, label: 'Chat' },
   { to: '/exams', icon: GraduationCap, label: 'Exams' },
-  { to: '/scripts', icon: Presentation, label: 'Scripts' },
+  { to: '/scripts', icon: FileText, label: 'Scripts' },
+  { to: '/presentations', icon: Projector, label: 'Presentations' },
 ];
 
 export function Navigation() {

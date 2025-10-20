@@ -159,6 +159,84 @@ export interface SystemStatus {
   };
 }
 
+// Presentation types
+export interface Slide {
+  slide_number: number;
+  title: string;
+  content: string[];
+  visual_suggestions?: string[];
+  speaker_notes?: string;
+}
+
+export interface PresentationContent {
+  title: string;
+  slides: Slide[];
+  total_slides: number;
+  estimated_duration: number;
+}
+
+export interface Presentation {
+  id: string;
+  user_id: string;
+  book_id: number | null;
+  title: string;
+  scope: 'whole_curriculum' | 'whole_book' | 'specific_topics';
+  specific_topics?: string;
+  detail_level: 'overview' | 'detailed' | 'comprehensive';
+  difficulty: 'beginner' | 'intermediate' | 'advanced';
+  slides_count: number;
+  slide_style: 'professional' | 'creative' | 'minimal';
+  include_diagrams: boolean;
+  include_code_examples: boolean;
+  content: PresentationContent;
+  created_at: string;
+  updated_at: string;
+  book_title?: string;
+  curriculum_name?: string;
+}
+
+export interface PresentationGenerateRequest {
+  curriculum_id?: number;
+  book_id?: number;
+  title: string;
+  scope: 'whole_curriculum' | 'whole_book' | 'specific_topics';
+  specific_books?: number[];
+  specific_topics?: string;
+  detail_level: 'overview' | 'detailed' | 'comprehensive';
+  difficulty: 'beginner' | 'intermediate' | 'advanced';
+  slides_count: number;
+  slide_style: 'professional' | 'creative' | 'minimal';
+  include_diagrams: boolean;
+  include_code_examples: boolean;
+}
+
+export interface PresentationCreateRequest {
+  book_id: number | null;
+  title: string;
+  scope: 'whole_curriculum' | 'whole_book' | 'specific_topics';
+  specific_topics?: string;
+  detail_level: 'overview' | 'detailed' | 'comprehensive';
+  difficulty: 'beginner' | 'intermediate' | 'advanced';
+  slides_count: number;
+  slide_style: 'professional' | 'creative' | 'minimal';
+  include_diagrams: boolean;
+  include_code_examples: boolean;
+  content: PresentationContent;
+}
+
+export interface PresentationUpdate {
+  title?: string;
+  content?: PresentationContent;
+  scope?: 'whole_curriculum' | 'whole_book' | 'specific_topics';
+  specific_topics?: string;
+  detail_level?: 'overview' | 'detailed' | 'comprehensive';
+  difficulty?: 'beginner' | 'intermediate' | 'advanced';
+  slides_count?: number;
+  slide_style?: 'professional' | 'creative' | 'minimal';
+  include_diagrams?: boolean;
+  include_code_examples?: boolean;
+}
+
 // Local storage types for frontend state
 export interface LocalBook extends Book {
   progress?: number;

@@ -15,6 +15,8 @@ import Books from "./pages/Books";
 import AddBook from "./pages/AddBook";
 import Scripts from './pages/Scripts_New';
 import ScriptSetup from './pages/Scripts';
+import Presentations from './pages/Presentations';
+import PresentationView from './pages/PresentationView';
 import Features from "./pages/Features";
 import SignIn from "./pages/SignIn";
 import SignUp from "./pages/SignUp";
@@ -90,6 +92,16 @@ const App = () => (
             <Route path="/scripts/create" element={
               <ProtectedRoute>
                 <ScriptSetup />
+              </ProtectedRoute>
+            } />
+            <Route path="/presentations" element={
+              <ProtectedRoute>
+                <Presentations />
+              </ProtectedRoute>
+            } />
+            <Route path="/presentations/:id" element={
+              <ProtectedRoute>
+                <PresentationView />
               </ProtectedRoute>
             } />
             

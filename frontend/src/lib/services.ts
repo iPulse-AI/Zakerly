@@ -14,7 +14,11 @@ import type {
   ChatSession,
   ChatMessage,
   SystemStatus,
-  UploadProgress
+  UploadProgress,
+  Presentation,
+  PresentationGenerateRequest,
+  PresentationCreateRequest,
+  PresentationUpdate
 } from './types';
 
 // Books Service
@@ -182,6 +186,39 @@ export class ScriptsService {
 
   static async deleteScript(scriptId: string, userId: string): Promise<{ message: string }> {
     const endpoint = `${API_ENDPOINTS.SCRIPT_BY_ID(scriptId)}?user_id=${userId}`;
+    return apiClient.delete<{ message: string }>(endpoint);
+  }
+}
+
+// Presentations Service
+export class PresentationsService {
+  static async generatePresentation(userId: string, request: PresentationGenerateRequest): Promise<any> {
+    const endpoint = `${API_ENDPOINTS.GENERATE_PRESENTATION}?user_id=${userId}`;
+    return apiClient.post<any>(endpoint, request);
+  }
+
+  static async createPresentation(userId: string, request: PresentationCreateRequest): Promise<Presentation> {
+    const endpoint = `${API_ENDPOINTS.PRESENTATIONS}?user_id=${userId}`;
+    return apiClient.post<Presentation>(endpoint, request);
+  }
+
+  static async getPresentation(presentationId: string, userId: string): Promise<Presentation> {
+    const endpoint = `${API_ENDPOINTS.PRESENTATION_BY_ID(presentationId)}?user_id=${userId}`;
+    return apiClient.get<Presentation>(endpoint);
+  }
+
+  static async getUserPresentations(userId: string): Promise<Presentation[]> {
+    const response = await apiClient.get<{presentations: Presentation[], count: number}>(API_ENDPOINTS.USER_PRESENTATIONS(userId));
+    return response.presentations;
+  }
+
+  static async updatePresentation(presentationId: string, userId: string, request: PresentationUpdate): Promise<Presentation> {
+    const endpoint = `${API_ENDPOINTS.PRESENTATION_BY_ID(presentationId)}?user_id=${userId}`;
+    return apiClient.put<Presentation>(endpoint, request);
+  }
+
+  static async deletePresentation(presentationId: string, userId: string): Promise<{ message: string }> {
+    const endpoint = `${API_ENDPOINTS.PRESENTATION_BY_ID(presentationId)}?user_id=${userId}`;
     return apiClient.delete<{ message: string }>(endpoint);
   }
 }

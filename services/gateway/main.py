@@ -70,6 +70,7 @@ CHAT_SERVICE_URL = os.getenv("CHAT_SERVICE_URL", "http://chat-service:8000")
 AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8000")
 EXAM_SERVICE_URL = os.getenv("EXAM_SERVICE_URL", "http://exam-service:8000")
 SCRIPT_SERVICE_URL = os.getenv("SCRIPT_SERVICE_URL", "http://script-service:8000")
+PRESENTATION_SERVICE_URL = os.getenv("PRESENTATION_SERVICE_URL", "http://presentation-service:8005")
 
 class RateLimiter:
     """Simple rate limiter using Redis"""
@@ -800,6 +801,135 @@ async def delete_script(script_id: str, user_id: str):
         raise
     except Exception as e:
         logger.error(f"Error in delete script endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ==================== PRESENTATION ENDPOINTS ====================
+
+@app.post("/api/v1/presentations/generate", dependencies=[Depends(check_rate_limit)])
+async def generate_presentation(request: Request, user_id: str):
+    """Generate presentation - routed to presentation service"""
+    try:
+        data = await request.json()
+        params = {"user_id": user_id}
+        
+        result = await forward_request(
+            PRESENTATION_SERVICE_URL,
+            "/curriculum-presentations/generate",
+            method="POST",
+            data=data,
+            params=params
+        )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in generate presentation endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/v1/presentations", dependencies=[Depends(check_rate_limit)])
+async def create_presentation(request: Request, user_id: str):
+    """Create a new presentation - routed to presentation service"""
+    try:
+        data = await request.json()
+        params = {"user_id": user_id}
+        
+        result = await forward_request(
+            PRESENTATION_SERVICE_URL,
+            "/presentations",
+            method="POST",
+            data=data,
+            params=params
+        )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in create presentation endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/presentations/{presentation_id}", dependencies=[Depends(check_rate_limit)])
+async def get_presentation(presentation_id: str, user_id: str):
+    """Get a specific presentation by ID - routed to presentation service"""
+    try:
+        params = {"user_id": user_id}
+        result = await forward_request(
+            PRESENTATION_SERVICE_URL,
+            f"/presentations/{presentation_id}",
+            method="GET",
+            params=params
+        )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in get presentation endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/users/{user_id}/presentations", dependencies=[Depends(check_rate_limit)])
+async def get_user_presentations(user_id: str):
+    """Get all presentations for a user - routed to presentation service"""
+    try:
+        result = await forward_request(
+            PRESENTATION_SERVICE_URL,
+            f"/users/{user_id}/presentations",
+            method="GET"
+        )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in get user presentations endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/v1/presentations/{presentation_id}", dependencies=[Depends(check_rate_limit)])
+async def update_presentation(presentation_id: str, request: Request, user_id: str):
+    """Update a presentation - routed to presentation service"""
+    try:
+        data = await request.json()
+        params = {"user_id": user_id}
+        
+        result = await forward_request(
+            PRESENTATION_SERVICE_URL,
+            f"/presentations/{presentation_id}",
+            method="PUT",
+            data=data,
+            params=params
+        )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in update presentation endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/v1/presentations/{presentation_id}", dependencies=[Depends(check_rate_limit)])
+async def delete_presentation(presentation_id: str, user_id: str):
+    """Delete a presentation - routed to presentation service"""
+    try:
+        params = {"user_id": user_id}
+        result = await forward_request(
+            PRESENTATION_SERVICE_URL,
+            f"/presentations/{presentation_id}",
+            method="DELETE",
+            params=params
+        )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in delete presentation endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Error handlers

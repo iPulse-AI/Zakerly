@@ -108,9 +108,9 @@ CREATE TABLE IF NOT EXISTS session_memory (
 CREATE TABLE IF NOT EXISTS lecture_scripts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL,
-    book_id INTEGER NOT NULL,
+    book_id INTEGER,
     title VARCHAR(255) NOT NULL,
-    scope VARCHAR(50) NOT NULL CHECK (scope IN ('whole_book', 'specific_topics')),
+    scope VARCHAR(50) NOT NULL CHECK (scope IN ('whole_curriculum', 'whole_book', 'specific_topics')),
     specific_topics TEXT,
     detail_level VARCHAR(50) NOT NULL CHECK (detail_level IN ('overview', 'detailed', 'in-depth')),
     difficulty VARCHAR(50) NOT NULL CHECK (difficulty IN ('beginner', 'intermediate', 'advanced')),
@@ -126,6 +126,31 @@ CREATE TABLE IF NOT EXISTS lecture_scripts (
         REFERENCES books(id) ON DELETE CASCADE
 );
 
+-- Create presentations table
+CREATE TABLE IF NOT EXISTS presentations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    book_id INTEGER,
+    title TEXT NOT NULL,
+    scope TEXT NOT NULL CHECK (scope IN ('whole_curriculum', 'whole_book', 'specific_topics')),
+    specific_topics TEXT,
+    detail_level TEXT NOT NULL CHECK (detail_level IN ('overview', 'detailed', 'comprehensive')),
+    difficulty TEXT NOT NULL CHECK (difficulty IN ('beginner', 'intermediate', 'advanced')),
+    slides_count INTEGER NOT NULL DEFAULT 15 CHECK (slides_count >= 5 AND slides_count <= 50),
+    slide_style TEXT NOT NULL DEFAULT 'professional' CHECK (slide_style IN ('professional', 'creative', 'minimal')),
+    include_diagrams BOOLEAN DEFAULT true,
+    include_code_examples BOOLEAN DEFAULT false,
+    content JSONB NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_presentation_user
+        FOREIGN KEY (user_id)
+        REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_presentation_book
+        FOREIGN KEY (book_id)
+        REFERENCES books(id) ON DELETE SET NULL
+);
+
 -- Create indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_books_curriculum_id ON books(curriculum_id);
 CREATE INDEX IF NOT EXISTS idx_books_file_hash ON books(file_hash);
@@ -139,6 +164,12 @@ CREATE INDEX IF NOT EXISTS idx_chat_history_session_id ON chat_history(session_i
 CREATE INDEX IF NOT EXISTS idx_chat_history_created_at ON chat_history(created_at);
 CREATE INDEX IF NOT EXISTS idx_session_memory_session_type ON session_memory(session_id, memory_type);
 CREATE INDEX IF NOT EXISTS idx_session_memory_expires ON session_memory(expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_lecture_scripts_user_id ON lecture_scripts(user_id);
+CREATE INDEX IF NOT EXISTS idx_lecture_scripts_book_id ON lecture_scripts(book_id);
+CREATE INDEX IF NOT EXISTS idx_presentations_user_id ON presentations(user_id);
+CREATE INDEX IF NOT EXISTS idx_presentations_book_id ON presentations(book_id);
+CREATE INDEX IF NOT EXISTS idx_presentations_created_at ON presentations(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_presentations_scope ON presentations(scope);
 
 -- Create function to update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -167,6 +198,16 @@ CREATE TRIGGER update_session_memory_updated_at
 -- Create trigger for curriculum
 CREATE TRIGGER update_curriculum_updated_at 
     BEFORE UPDATE ON curriculum 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Create trigger for lecture_scripts
+CREATE TRIGGER update_lecture_scripts_updated_at 
+    BEFORE UPDATE ON lecture_scripts 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Create trigger for presentations
+CREATE TRIGGER update_presentations_updated_at 
+    BEFORE UPDATE ON presentations 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Create functions for curriculum embedding tables
@@ -230,3 +271,9 @@ BEGIN
         PERFORM create_curriculum_embedding_table(curr.name, 1536);
     END LOOP;
 END $$;
+
+-- Add table comments
+COMMENT ON TABLE presentations IS 'Stores generated presentations with slide content in JSON format';
+COMMENT ON COLUMN presentations.content IS 'JSON structure containing slides array with title, content, visual_suggestions, and speaker_notes';
+COMMENT ON COLUMN presentations.scope IS 'Determines the generation scope: whole_curriculum, whole_book, or specific_topics';
+COMMENT ON COLUMN presentations.slide_style IS 'Visual style of presentation: professional, creative, or minimal';

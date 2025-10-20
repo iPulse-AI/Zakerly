@@ -33,6 +33,12 @@ export const API_ENDPOINTS = {
   SCRIPT_BY_ID: (id: string) => `/api/v1/scripts/${id}`,
   USER_SCRIPTS: (userId: string) => `/api/v1/users/${userId}/scripts`,
   
+  // Presentations
+  GENERATE_PRESENTATION: '/api/v1/presentations/generate',
+  PRESENTATIONS: '/api/v1/presentations',
+  PRESENTATION_BY_ID: (id: string) => `/api/v1/presentations/${id}`,
+  USER_PRESENTATIONS: (userId: string) => `/api/v1/users/${userId}/presentations`,
+  
   // System
   HEALTH: '/health',
   STATUS: '/api/v1/status'
