@@ -93,6 +93,29 @@ async def health_check():
         "timestamp": datetime.utcnow().isoformat()
     }
 
+@app.post("/test-presentation")
+async def test_presentation_fix():
+    """Test the presentation fix"""
+    try:
+        # Test the fixed LLM call
+        result = await presentation_service._generate_presentation_with_llm(
+            title="Test Presentation",
+            context_type="book",
+            context_name="Test Book",
+            topics=["Topic 1", "Topic 2"],
+            content_chunks=[{"content": "Test content"}],
+            books=["Test Book"],
+            detail_level="detailed",
+            difficulty="intermediate",
+            slides_count=3,
+            slide_style="professional",
+            include_diagrams=True,
+            include_code_examples=False
+        )
+        return {"status": "success", "result": result}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
 # Generate presentation
 @app.post("/curriculum-presentations/generate")
 async def generate_presentation(

@@ -1069,27 +1069,6 @@ Please generate a complete, professional lecture script that provides focused, d
     async def create_lecture_script(self, user_id: str, request: LectureScriptRequest) -> dict:
         """Create a new lecture script"""
         try:
-            # Check if user exists, if not create a default user entry
-            user_check_query = "SELECT id FROM users WHERE id = $1"
-            user_exists = await self.db.execute_query(user_check_query, user_id)
-            
-            if not user_exists:
-                logger.warning(f"⚠️ User {user_id} not found, creating default user entry")
-                create_user_query = """
-                    INSERT INTO users (id, email, full_name, password_hash)
-                    VALUES ($1, $2, $3, $4)
-                    ON CONFLICT (id) DO NOTHING
-                """
-                # Create a default user with the provided UUID
-                await self.db.execute_query(
-                    create_user_query,
-                    user_id,
-                    f"{user_id}@zakerly.local",
-                    f"User {user_id[:8]}",
-                    "placeholder_hash"  # Placeholder, as this user won't be used for login
-                )
-                logger.info(f"✅ Created default user entry for {user_id}")
-            
             query = """
                 INSERT INTO lecture_scripts 
                 (user_id, book_id, title, scope, specific_topics, detail_level, difficulty, duration, content)

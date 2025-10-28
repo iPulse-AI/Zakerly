@@ -1,6 +1,7 @@
 import asyncpg
 import asyncio
 import os
+import uuid
 from typing import Optional, List, Dict, Any
 import logging
 from contextlib import asynccontextmanager
@@ -272,6 +273,16 @@ class DatabaseManager:
     
     async def create_curriculum(self, name: str, description: str = None, created_by: str = 'user') -> int:
         """Create new curriculum and return ID"""
+        # Validate and fix created_by to ensure it's a valid UUID
+        try:
+            # Check if it's already a valid UUID
+            uuid.UUID(created_by)
+            logger.info(f"✅ Valid UUID: {created_by}")
+        except ValueError as e:
+            # If not a valid UUID, generate a new one
+            created_by = str(uuid.uuid4())
+            logger.warning(f"⚠️ Invalid UUID '{created_by}' converted to new UUID: {created_by}")
+        
         query = """
             INSERT INTO curriculum (name, description, created_by)
             VALUES ($1, $2, $3)

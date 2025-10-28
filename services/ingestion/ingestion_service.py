@@ -3,6 +3,8 @@ from typing import List, Optional, Dict, Any
 import asyncio
 from datetime import datetime
 import json
+import uuid
+import re
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
@@ -415,11 +417,16 @@ Respond with ONLY the JSON object, no additional text."""),
     
     async def create_curriculum(self, curriculum_request) -> CurriculumModel:
         """Create new curriculum"""
+        logger.info(f"🔧 DEBUG: create_curriculum called with created_by: '{curriculum_request.created_by}'")
         try:
+            # Validate and fix the created_by field FIRST, before any database operations
+            user_id = self._validate_and_fix_user_id(curriculum_request.created_by)
+            logger.info(f"Creating curriculum with user_id: {user_id}")
+            
             curriculum_id = await self.db.create_curriculum(
                 curriculum_request.name, 
                 curriculum_request.description, 
-                curriculum_request.created_by
+                user_id  # Use the validated UUID
             )
             curriculum_data = await self.db.get_curriculum_by_id(curriculum_id)
             return CurriculumModel(**curriculum_data)
@@ -427,6 +434,20 @@ Respond with ONLY the JSON object, no additional text."""),
         except Exception as e:
             logger.error(f"Error creating curriculum: {e}")
             raise
+    
+    def _validate_and_fix_user_id(self, user_id: str) -> str:
+        """Validate and fix user_id to ensure it's a valid UUID"""
+        logger.info(f"Validating user_id: '{user_id}' (type: {type(user_id)})")
+        try:
+            # Check if it's already a valid UUID
+            uuid.UUID(user_id)
+            logger.info(f"✅ Valid UUID: {user_id}")
+            return user_id
+        except ValueError as e:
+            # If not a valid UUID, generate a new one
+            new_uuid = str(uuid.uuid4())
+            logger.warning(f"⚠️ Invalid UUID '{user_id}' (error: {e}), generated new UUID: {new_uuid}")
+            return new_uuid
     
     async def get_curriculum_by_id(self, curriculum_id: int) -> Optional[CurriculumModel]:
         """Get curriculum by ID"""

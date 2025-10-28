@@ -438,24 +438,27 @@ Your task is to create a """ + str(slides_count) + """-slide presentation about 
 Generate the presentation now. Return ONLY valid JSON, no additional text."""
 
         try:
-            # Generate with LLM
-            prompt = ChatPromptTemplate.from_messages([("human", system_prompt)])
-            chain = prompt | self.llm | StrOutputParser()
+            # Generate with LLM - use direct prompt without template variables
+            response = await self.llm.ainvoke(system_prompt)
             
-            response = await chain.ainvoke({})
+            # Extract content from response
+            if hasattr(response, 'content'):
+                response_text = response.content
+            else:
+                response_text = str(response)
             
             # Parse JSON response
             # Clean response (remove markdown code blocks if present)
-            response = response.strip()
-            if response.startswith("```json"):
-                response = response[7:]
-            if response.startswith("```"):
-                response = response[3:]
-            if response.endswith("```"):
-                response = response[:-3]
-            response = response.strip()
+            response_text = response_text.strip()
+            if response_text.startswith("```json"):
+                response_text = response_text[7:]
+            if response_text.startswith("```"):
+                response_text = response_text[3:]
+            if response_text.endswith("```"):
+                response_text = response_text[:-3]
+            response_text = response_text.strip()
             
-            presentation_data = json.loads(response)
+            presentation_data = json.loads(response_text)
             
             # Validate structure
             if "slides" not in presentation_data:

@@ -1,6 +1,8 @@
 from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
@@ -8,7 +10,7 @@ import uvicorn
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, ValidationError
 import logging
 from contextlib import asynccontextmanager
 
@@ -78,6 +80,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add validation error handler
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc):
+    """Handle validation errors"""
+    logger.error(f"Validation error: {exc}")
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": "Validation error",
+            "details": str(exc),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    )
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify password against hash"""
@@ -152,8 +168,13 @@ async def health_check():
 async def signup(user_data: UserCreate):
     """User signup"""
     try:
+        # Debug logging
+        logger.info(f"Signup request received - email: {user_data.email}, full_name: {user_data.full_name}")
+        logger.info(f"Password length: {len(user_data.password)}, confirm_password length: {len(user_data.confirm_password)}")
+        
         # Validate passwords match
         if user_data.password != user_data.confirm_password:
+            logger.warning(f"Password mismatch for user: {user_data.email}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Passwords do not match"
@@ -161,6 +182,7 @@ async def signup(user_data: UserCreate):
         
         # Validate password length
         if len(user_data.password) < 8:
+            logger.warning(f"Password too short for user: {user_data.email} (length: {len(user_data.password)})")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Password must be at least 8 characters long"
@@ -177,6 +199,7 @@ async def signup(user_data: UserCreate):
             cursor.execute("SELECT id FROM users WHERE email = %s", (user_data.email,))
             if cursor.fetchone():
                 conn.close()
+                logger.warning(f"Email already registered: {user_data.email}")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Email already registered"
