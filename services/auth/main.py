@@ -12,6 +12,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel, EmailStr, ValidationError
 import logging
+import json
 from contextlib import asynccontextmanager
 
 # Setup logging
@@ -57,6 +58,24 @@ class User(BaseModel):
     full_name: str
     email: str
     created_at: datetime
+
+class UserStats(BaseModel):
+    totalBooks: int
+    totalScripts: int
+    totalSessions: int
+    totalChats: int
+    learningHours: float
+    streak: int
+
+class ActivityTrack(BaseModel):
+    activity_type: str
+    metadata: str = "{}"
+
+class RecentActivity(BaseModel):
+    courseName: str
+    lastAccessed: str
+    progress: float
+    activityType: str
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -296,6 +315,142 @@ async def get_current_user_info(current_user: User = Depends(get_current_user)):
 async def verify_token(current_user: User = Depends(get_current_user)):
     """Verify if token is valid"""
     return {"valid": True, "user_id": current_user.id}
+
+@app.post("/track-activity")
+async def track_activity(
+    activity_data: ActivityTrack,
+    current_user: User = Depends(get_current_user)
+):
+    """Track user activity"""
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            # Insert activity record
+            cursor.execute(
+                """
+                INSERT INTO user_activities (user_id, activity_type, metadata, activity_date) 
+                VALUES (%s, %s, %s, %s)
+                """,
+                (current_user.id, activity_data.activity_type, activity_data.metadata, datetime.utcnow())
+            )
+            conn.commit()
+        conn.close()
+        
+        return {"status": "success", "message": "Activity tracked"}
+    except Exception as e:
+        logger.error(f"Error tracking activity: {e}")
+        raise HTTPException(status_code=500, detail="Failed to track activity")
+
+@app.get("/stats", response_model=UserStats)
+async def get_user_stats(current_user: User = Depends(get_current_user)):
+    """Get user learning statistics"""
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            # Get books count (assuming books table exists)
+            cursor.execute("SELECT COUNT(*) as count FROM books WHERE created_by = %s OR %s = %s", (current_user.id, current_user.id, current_user.id))
+            books_result = cursor.fetchone()
+            total_books = books_result["count"] if books_result else 0
+            
+            # Get scripts count (assuming lecture_scripts table exists)
+            cursor.execute("SELECT COUNT(*) as count FROM lecture_scripts WHERE user_id = %s", (current_user.id,))
+            scripts_result = cursor.fetchone()
+            total_scripts = scripts_result["count"] if scripts_result else 0
+            
+            # Get chat sessions count (assuming chat_sessions table exists)
+            cursor.execute("SELECT COUNT(*) as count FROM chat_sessions WHERE user_id = %s", (current_user.id,))
+            sessions_result = cursor.fetchone()
+            total_sessions = sessions_result["count"] if sessions_result else 0
+            
+            # Calculate learning hours (estimate 30 minutes per session)
+            learning_hours = total_sessions * 0.5
+            
+            # Calculate streak (simplified - count consecutive days with activity)
+            cursor.execute(
+                """
+                SELECT COUNT(DISTINCT DATE(activity_date)) as streak 
+                FROM user_activities 
+                WHERE user_id = %s 
+                AND activity_date >= %s
+                """,
+                (current_user.id, datetime.utcnow() - timedelta(days=30))
+            )
+            streak_result = cursor.fetchone()
+            streak = min(streak_result["streak"] if streak_result else 0, 30)
+            
+        conn.close()
+        
+        return UserStats(
+            totalBooks=total_books,
+            totalScripts=total_scripts,
+            totalSessions=total_sessions,
+            totalChats=total_sessions,
+            learningHours=learning_hours,
+            streak=streak
+        )
+    except Exception as e:
+        logger.error(f"Error getting user stats: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get user statistics")
+
+@app.get("/recent-activity")
+async def get_recent_activity(current_user: User = Depends(get_current_user)):
+    """Get user's recent learning activity"""
+    try:
+        conn = get_db_connection()
+        activities = []
+        
+        with conn.cursor() as cursor:
+            # Get recent scripts
+            cursor.execute(
+                """
+                SELECT title, created_at, 'script' as type 
+                FROM lecture_scripts 
+                WHERE user_id = %s 
+                ORDER BY created_at DESC 
+                LIMIT 5
+                """,
+                (current_user.id,)
+            )
+            scripts = cursor.fetchall()
+            
+            for script in scripts:
+                activities.append({
+                    "courseName": script["title"],
+                    "lastAccessed": script["created_at"].strftime("%Y-%m-%d"),
+                    "progress": 100.0,  # Scripts are considered complete when created
+                    "activityType": "script"
+                })
+            
+            # Get recent chat sessions
+            cursor.execute(
+                """
+                SELECT session_name, updated_at, 'chat' as type 
+                FROM chat_sessions 
+                WHERE user_id = %s 
+                ORDER BY updated_at DESC 
+                LIMIT 5
+                """,
+                (current_user.id,)
+            )
+            chats = cursor.fetchall()
+            
+            for chat in chats:
+                activities.append({
+                    "courseName": chat["session_name"] or "Chat Session",
+                    "lastAccessed": chat["updated_at"].strftime("%Y-%m-%d"),
+                    "progress": 75.0,  # Estimate progress for chats
+                    "activityType": "chat"
+                })
+        
+        conn.close()
+        
+        # Sort by date and return most recent
+        activities.sort(key=lambda x: x["lastAccessed"], reverse=True)
+        return activities[:10]
+        
+    except Exception as e:
+        logger.error(f"Error getting recent activity: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get recent activity")
 
 if __name__ == "__main__":
     uvicorn.run(

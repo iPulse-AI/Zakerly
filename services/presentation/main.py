@@ -185,9 +185,26 @@ async def create_presentation(
         logger.info(f"✅ Presentation created with ID: {result.get('id')}")
         return result
         
+    except ValueError as ve:
+        # Handle user validation errors with clear message
+        error_msg = str(ve)
+        logger.error(f"⚠️ Validation error creating presentation: {error_msg}")
+        if "User not found" in error_msg or "log in again" in error_msg:
+            raise HTTPException(
+                status_code=401, 
+                detail="Your session has expired. Please log out and log back in to continue."
+            )
+        raise HTTPException(status_code=400, detail=error_msg)
     except Exception as e:
         logger.error(f"Error creating presentation: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to create presentation: {str(e)}")
+        # Check if it's a foreign key constraint error (backup check)
+        error_detail = str(e)
+        if "foreign key constraint" in error_detail.lower() or "fk_presentation_user" in error_detail.lower():
+            raise HTTPException(
+                status_code=401,
+                detail="Your session has expired. Please log out and log back in to continue."
+            )
+        raise HTTPException(status_code=500, detail=f"Failed to create presentation: {error_detail}")
 
 # Get user presentations
 @app.get("/users/{user_id}/presentations")

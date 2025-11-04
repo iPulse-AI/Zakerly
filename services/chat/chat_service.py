@@ -619,6 +619,16 @@ Please provide a comprehensive answer using ONLY the information from the curric
             if not curriculum_name and not book_title:
                 raise ValueError("Either curriculum_name or book_title must be provided")
             
+            # CRITICAL: Validate that user exists in the database before creating session
+            user_check_query = "SELECT id FROM users WHERE id = $1"
+            user_result = await self.db.execute_query(user_check_query, user_id)
+            
+            if not user_result or len(user_result) == 0:
+                logger.error(f"❌ User with ID {user_id} not found in database. User needs to log in again.")
+                raise ValueError(f"User not found. Please log out and log in again to refresh your session.")
+            
+            logger.info(f"✅ User {user_id} validated successfully")
+            
             # Generate session name if not provided
             if not session_name:
                 if curriculum_name:

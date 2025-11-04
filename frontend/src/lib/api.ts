@@ -68,6 +68,26 @@ class ApiClient {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
+      
+      // ✅ CRITICAL FIX: Handle 401 Unauthorized (expired/invalid user sessions)
+      if (response.status === 401) {
+        console.error('🔒 Session expired or invalid user. Clearing local storage and redirecting to login...');
+        
+        // Clear all cached data
+        localStorage.clear();
+        sessionStorage.clear();
+        
+        // Show user-friendly error
+        const errorMessage = errorData.detail || 'Your session has expired. Please log in again.';
+        
+        // Redirect to signin after a brief delay
+        setTimeout(() => {
+          window.location.href = '/signin';
+        }, 1000);
+        
+        throw new Error(errorMessage);
+      }
+      
       throw new Error(errorData.error || errorData.detail || `HTTP ${response.status}: ${response.statusText}`);
     }
 

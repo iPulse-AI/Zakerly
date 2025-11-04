@@ -151,6 +151,40 @@ CREATE TABLE IF NOT EXISTS presentations (
         REFERENCES books(id) ON DELETE SET NULL
 );
 
+-- Create user activities table for tracking user engagement
+CREATE TABLE IF NOT EXISTS user_activities (
+    id SERIAL PRIMARY KEY,
+    user_id UUID NOT NULL,
+    activity_type VARCHAR(100) NOT NULL, -- 'login', 'dashboard_view', 'book_added', 'script_created', 'chat_started', etc.
+    activity_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    metadata JSONB DEFAULT '{}', -- Additional data like book_id, script_id, etc.
+    CONSTRAINT fk_activity_user
+        FOREIGN KEY (user_id)
+        REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Create user progress table for tracking learning progress
+CREATE TABLE IF NOT EXISTS user_progress (
+    id SERIAL PRIMARY KEY,
+    user_id UUID NOT NULL,
+    book_id INTEGER,
+    curriculum_id INTEGER,
+    progress_percentage DECIMAL(5,2) DEFAULT 0.0 CHECK (progress_percentage >= 0 AND progress_percentage <= 100),
+    completed BOOLEAN DEFAULT FALSE,
+    last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    enrolled_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, book_id),
+    CONSTRAINT fk_progress_user
+        FOREIGN KEY (user_id)
+        REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_progress_book
+        FOREIGN KEY (book_id)
+        REFERENCES books(id) ON DELETE CASCADE,
+    CONSTRAINT fk_progress_curriculum
+        FOREIGN KEY (curriculum_id)
+        REFERENCES curriculum(id) ON DELETE CASCADE
+);
+
 -- Create indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_books_curriculum_id ON books(curriculum_id);
 CREATE INDEX IF NOT EXISTS idx_books_file_hash ON books(file_hash);
@@ -170,6 +204,13 @@ CREATE INDEX IF NOT EXISTS idx_presentations_user_id ON presentations(user_id);
 CREATE INDEX IF NOT EXISTS idx_presentations_book_id ON presentations(book_id);
 CREATE INDEX IF NOT EXISTS idx_presentations_created_at ON presentations(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_presentations_scope ON presentations(scope);
+CREATE INDEX IF NOT EXISTS idx_user_activities_user_id ON user_activities(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_activities_type ON user_activities(activity_type);
+CREATE INDEX IF NOT EXISTS idx_user_activities_date ON user_activities(activity_date DESC);
+CREATE INDEX IF NOT EXISTS idx_user_progress_user_id ON user_progress(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_progress_book_id ON user_progress(book_id);
+CREATE INDEX IF NOT EXISTS idx_user_progress_curriculum_id ON user_progress(curriculum_id);
+CREATE INDEX IF NOT EXISTS idx_user_progress_last_accessed ON user_progress(last_accessed DESC);
 
 -- Create function to update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()

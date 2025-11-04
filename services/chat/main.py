@@ -122,9 +122,26 @@ async def create_session(
         
     except HTTPException:
         raise
+    except ValueError as ve:
+        # Handle user validation errors with clear message
+        error_msg = str(ve)
+        logger.error(f"⚠️ Validation error creating session: {error_msg}")
+        if "User not found" in error_msg or "log in again" in error_msg:
+            raise HTTPException(
+                status_code=401, 
+                detail="Your session has expired. Please log out and log back in to continue."
+            )
+        raise HTTPException(status_code=400, detail=error_msg)
     except Exception as e:
-        logger.error(f"Error creating session: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        logger.error(f"❌ Error creating session: {e}")
+        error_detail = str(e)
+        # Check if it's a foreign key constraint error (backup check)
+        if "foreign key constraint" in error_detail.lower() or "fk_user" in error_detail.lower():
+            raise HTTPException(
+                status_code=401,
+                detail="Your session has expired. Please log out and log back in to continue."
+            )
+        raise HTTPException(status_code=500, detail=f"Internal server error: {error_detail}")
 
 @app.get("/sessions/{session_id}", response_model=ChatSessionModel)
 async def get_session(

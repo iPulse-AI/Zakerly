@@ -20,7 +20,11 @@ import {
   MessageCircle,
   FileText,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Clock,
+  Calendar,
+  Award,
+  Users
 } from 'lucide-react';
 
 interface DashboardStats {
@@ -63,11 +67,12 @@ interface RecentActivity {
 }
 
 export default function Dashboard() {
-  const { user } = useAuth();
+  const { user, trackActivity } = useAuth();
   const navigate = useNavigate();
   const [selectedTab, setSelectedTab] = useState("overview");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [greeting, setGreeting] = useState('');
   
   // State for real data
   const [stats, setStats] = useState<DashboardStats>({
@@ -83,12 +88,28 @@ export default function Dashboard() {
   const [recentSessions, setRecentSessions] = useState<Session[]>([]);
   const [recentActivity, setRecentActivity] = useState<RecentActivity[]>([]);
 
+  // Set dynamic greeting based on time of day
+  useEffect(() => {
+    const hour = new Date().getHours();
+    if (hour < 12) setGreeting('Good morning');
+    else if (hour < 18) setGreeting('Good afternoon');
+    else setGreeting('Good evening');
+  }, []);
+
   // Fetch user data on component mount
   useEffect(() => {
     if (user?.sub) {
       fetchDashboardData();
+      // Track dashboard view activity
+      trackActivity('dashboard_view').catch(err => console.warn('Failed to track dashboard view:', err));
     }
   }, [user?.sub]);
+
+  // Get user's first name for personalization
+  const getUserFirstName = () => {
+    if (!user?.full_name) return 'there';
+    return user.full_name.split(' ')[0];
+  };
 
   const fetchDashboardData = async () => {
     if (!user?.sub) return;
@@ -97,7 +118,44 @@ export default function Dashboard() {
       setLoading(true);
       setError(null);
 
-      // Fetch all data in parallel
+      // Fetch user stats from auth service
+      const statsResponse = await fetch('/api/auth/stats', {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+        }
+      });
+
+      if (statsResponse.ok) {
+        const userStats = await statsResponse.json();
+        setStats({
+          totalBooks: userStats.totalBooks,
+          totalScripts: userStats.totalScripts,
+          totalSessions: userStats.totalSessions,
+          totalChats: userStats.totalChats,
+          lastActivity: userStats.lastActivity || 'Never'
+        });
+      }
+
+      // Fetch recent activity
+      const activityResponse = await fetch('/api/auth/recent-activity', {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+        }
+      });
+
+      if (activityResponse.ok) {
+        const recentActivityData = await activityResponse.json();
+        const activities: RecentActivity[] = recentActivityData.map((activity: any) => ({
+          type: activity.activityType as 'book' | 'script' | 'session' | 'chat',
+          title: activity.courseName,
+          time: getRelativeTime(activity.lastAccessed),
+          icon: activity.activityType === 'script' ? FileText : 
+                activity.activityType === 'chat' ? MessageCircle : BookOpen
+        }));
+        setRecentActivity(activities);
+      }
+
+      // Fetch all data in parallel (fallback to original services)
       const [booksData, scriptsData, sessionsData] = await Promise.all([
         BooksService.getBooks().catch(err => {
           console.warn('Failed to fetch books:', err);
@@ -113,23 +171,27 @@ export default function Dashboard() {
         })
       ]);
 
-      // Process and set data
+      // Process and set fallback data if API stats failed
       setRecentBooks(booksData.slice(0, 5) || []);
       setRecentScripts(scriptsData.slice(0, 5) || []);
       setRecentSessions(sessionsData.slice(0, 5) || []);
 
-      // Calculate stats
-      const newStats: DashboardStats = {
-        totalBooks: booksData?.length || 0,
-        totalScripts: scriptsData?.length || 0,
-        totalSessions: sessionsData?.length || 0,
-        totalChats: sessionsData?.length || 0,
-        lastActivity: getLastActivity(booksData, scriptsData, sessionsData)
-      };
-      setStats(newStats);
+      // If stats API failed, calculate from local data
+      if (!statsResponse.ok) {
+        const fallbackStats: DashboardStats = {
+          totalBooks: booksData?.length || 0,
+          totalScripts: scriptsData?.length || 0,
+          totalSessions: sessionsData?.length || 0,
+          totalChats: sessionsData?.length || 0,
+          lastActivity: getLastActivity(booksData, scriptsData, sessionsData)
+        };
+        setStats(fallbackStats);
+      }
 
-      // Generate recent activity
-      generateRecentActivity(booksData, scriptsData, sessionsData);
+      // Generate recent activity if API failed
+      if (!activityResponse.ok) {
+        generateRecentActivity(booksData, scriptsData, sessionsData);
+      }
 
     } catch (err) {
       console.error('Error fetching dashboard data:', err);
@@ -221,21 +283,33 @@ export default function Dashboard() {
     return date.toLocaleDateString();
   };
 
-  // Simple motivational message
+  // Enhanced motivational message with user personalization
   const getMotivationalMessage = () => {
     const recentBooksCount = recentBooks.length;
     const recentScriptsCount = recentScripts.length;
+    const userName = getUserFirstName();
 
     if (stats.totalBooks === 0) {
-      return "Welcome to Zakerly! Start by adding your first book to begin your learning journey.";
+      return `Welcome to Zakerly, ${userName}! Start by adding your first book to begin your learning journey.`;
     }
+    
     if (recentBooksCount > 0 && recentScriptsCount === 0) {
-      return "Great start! You've added books. Now try creating your first lecture script.";
+      return `Great start, ${userName}! You've added ${recentBooksCount} book${recentBooksCount > 1 ? 's' : ''}. Now try creating your first lecture script.`;
     }
+    
     if (stats.totalSessions === 0) {
-      return "Ready to dive deeper? Start a chat session with your books to unlock AI-powered insights.";
+      return `Ready to dive deeper, ${userName}? Start a chat session with your books to unlock AI-powered insights.`;
     }
-    return "Keep up the great work with your learning journey!";
+    
+    if (stats.totalBooks > 5 && stats.totalScripts > 3) {
+      return `Impressive progress, ${userName}! You're building a comprehensive learning library. Keep it up! 🌟`;
+    }
+    
+    if (stats.totalSessions > 10) {
+      return `You're on fire, ${userName}! ${stats.totalSessions} chat sessions completed. Your dedication is inspiring! 🔥`;
+    }
+    
+    return `Keep up the excellent work with your learning journey, ${userName}! 📚`;
   };
 
   const statCards = [
@@ -245,7 +319,8 @@ export default function Dashboard() {
       icon: BookOpen, 
       color: "text-blue-600", 
       bgColor: "bg-blue-100",
-      action: () => navigate('/books')
+      action: () => navigate('/books'),
+      description: "Total books added"
     },
     { 
       label: "Lecture Scripts", 
@@ -253,7 +328,8 @@ export default function Dashboard() {
       icon: FileText, 
       color: "text-purple-600", 
       bgColor: "bg-purple-100",
-      action: () => navigate('/scripts')
+      action: () => navigate('/scripts'),
+      description: "Scripts created"
     },
     { 
       label: "Chat Sessions", 
@@ -261,7 +337,17 @@ export default function Dashboard() {
       icon: MessageCircle, 
       color: "text-green-600", 
       bgColor: "bg-green-100",
-      action: () => navigate('/chat')
+      action: () => navigate('/chat'),
+      description: "AI conversations"
+    },
+    {
+      label: "Learning Hours",
+      value: Math.round(stats.totalSessions * 0.5), // Estimate 30 min per session
+      icon: Clock,
+      color: "text-orange-600",
+      bgColor: "bg-orange-100",
+      action: () => setSelectedTab("overview"),
+      description: "Time invested"
     }
   ];
 
@@ -287,26 +373,58 @@ export default function Dashboard() {
       
       <div className="container mx-auto px-4 py-8">
         <div className="max-w-7xl mx-auto">
-          {/* Welcome Section */}
+          {/* Personalized Welcome Section */}
           <div className="mb-8">
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h1 className="text-3xl font-bold bg-gradient-to-r from-primary to-purple-600 bg-clip-text text-transparent mb-2">
-                  Welcome back! 👋
-                </h1>
-                <p className="text-muted-foreground">
-                  Here's your learning progress and activities
-                </p>
+            <div className="bg-white shadow-sm border border-gray-100 rounded-xl p-6 mb-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h1 className="text-3xl font-bold text-gray-900 mb-2">
+                    {greeting}, {getUserFirstName()}! 👋
+                  </h1>
+                  <p className="text-gray-600">
+                    Ready to continue your learning journey?
+                  </p>
+                </div>
+                <div className="flex items-center space-x-6">
+                  <div className="text-right">
+                    <p className="text-sm text-gray-500">Current Streak</p>
+                    <div className="flex items-center gap-1">
+                      <p className="text-2xl font-bold text-orange-500">
+                        {stats.totalSessions > 0 ? Math.min(stats.totalSessions, 30) : 0}
+                      </p>
+                      <span className="text-lg">🔥</span>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm text-gray-500">Last Active</p>
+                    <div className="flex items-center gap-1">
+                      <Clock className="w-4 h-4 text-gray-500" />
+                      <p className="text-sm font-medium text-gray-700">{stats.lastActivity}</p>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div className="text-right">
-                <div className="flex items-center gap-2 mb-2">
-                  <Activity className="w-5 h-5 text-primary" />
-                  <span className="font-medium">Last active: {stats.lastActivity}</span>
+              
+              {/* Today's Date and Motivational Message */}
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-gray-600">
+                    <Calendar className="w-5 h-5" />
+                    <span className="text-sm">
+                      {new Date().toLocaleDateString('en-US', { 
+                        weekday: 'long', 
+                        year: 'numeric', 
+                        month: 'long', 
+                        day: 'numeric' 
+                      })}
+                    </span>
+                  </div>
+                  <div className="text-sm text-gray-600">
+                    {getMotivationalMessage()}
+                  </div>
                 </div>
               </div>
             </div>
-
-
 
             {/* Error Display */}
             {error && (
@@ -317,23 +435,25 @@ export default function Dashboard() {
             )}
           </div>
 
-          {/* Stats Overview */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+          {/* Enhanced Stats Overview */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
             {statCards.map((stat, index) => (
               <Card 
                 key={index} 
-                className="hover:shadow-lg transition-all duration-200 cursor-pointer group"
+                className="hover:shadow-lg transition-all duration-200 cursor-pointer group border border-gray-100"
                 onClick={stat.action}
               >
                 <CardContent className="pt-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-muted-foreground">{stat.label}</p>
-                      <p className="text-2xl font-bold">{stat.value}</p>
-                    </div>
+                  <div className="flex items-center justify-between mb-3">
                     <div className={`w-12 h-12 rounded-lg ${stat.bgColor} flex items-center justify-center group-hover:scale-110 transition-transform`}>
                       <stat.icon className={`w-6 h-6 ${stat.color}`} />
                     </div>
+                    <ArrowRight className="w-4 h-4 text-gray-400 group-hover:text-gray-600 group-hover:translate-x-1 transition-all" />
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold text-gray-900 mb-1">{stat.value}</p>
+                    <p className="text-sm font-medium text-gray-700">{stat.label}</p>
+                    <p className="text-xs text-gray-500">{stat.description}</p>
                   </div>
                 </CardContent>
               </Card>

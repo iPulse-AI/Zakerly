@@ -18,10 +18,12 @@ import {
 } from 'lucide-react';
 import { Alert, AlertDescription } from '../components/ui/alert';
 import { Separator } from '../components/ui/separator';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function PresentationView() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth(); // ✅ Get authenticated user
   const [presentation, setPresentation] = useState<Presentation | null>(null);
   const [currentSlide, setCurrentSlide] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -29,7 +31,7 @@ export default function PresentationView() {
   const [fullscreen, setFullscreen] = useState(false);
   const [showSpeakerNotes, setShowSpeakerNotes] = useState(true);
 
-  const userId = Utils.generateUserId();
+  const userId = user?.sub || ''; // ✅ Use authenticated user's ID
 
   useEffect(() => {
     if (id) {

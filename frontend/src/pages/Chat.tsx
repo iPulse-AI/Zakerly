@@ -12,6 +12,7 @@ import { Send, BookOpen, Download, Copy, ExternalLink, Loader2, AlertCircle, Arr
 import { cn } from '@/lib/utils';
 import { BooksService, ChatService, SessionService, Utils, CurriculumService } from '@/lib/services';
 import type { Book as BookType, ChatMessage, ChatSession, ChatResponse, Curriculum, QuestionGenerationRequest } from '@/lib/types';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface Message {
   id: string;
@@ -25,6 +26,7 @@ export default function Chat() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const curriculumParam = searchParams.get('curriculum');
+  const { user } = useAuth(); // ✅ Get authenticated user from AuthContext
   
   const [curriculums, setCurriculums] = useState<Curriculum[]>([]);
   const [selectedCurriculum, setSelectedCurriculum] = useState<string>('');
@@ -39,7 +41,7 @@ export default function Chat() {
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const userId = Utils.generateUserId();
+  const userId = user?.sub || ''; // ✅ Use authenticated user's ID from JWT token
 
   const selectedCurriculumData = curriculums.find(curr => curr.id.toString() === selectedCurriculum);
 

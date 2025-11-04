@@ -68,7 +68,7 @@ interface GeneratedScript {
 }
 
 const Scripts: React.FC = () => {
-  const { token } = useAuth();
+  const { token, user } = useAuth(); // ✅ Get authenticated user
   const navigate = useNavigate();
   
   // State Management
@@ -92,7 +92,13 @@ const Scripts: React.FC = () => {
   const loadUserScripts = async () => {
     try {
       setLoading(true);
-      const userId = localStorage.getItem('zakerly_user_id') || 'default-user';
+      const userId = user?.sub; // ✅ Use authenticated user's ID
+      
+      if (!userId) {
+        setError('User not authenticated. Please log in again.');
+        setLoading(false);
+        return;
+      }
       
       // Import ScriptsService dynamically
       const { ScriptsService } = await import('@/lib/services');

@@ -134,9 +134,9 @@ class LectureScript(BaseModel):
         return v
 
 class LectureScriptRequest(BaseModel):
-    book_id: int
+    book_id: Optional[int] = None  # Optional: null for curriculum-wide scripts
     title: str
-    scope: str = Field(..., description="Scope: whole_book or specific_topics")
+    scope: str = Field(..., description="Scope: whole_curriculum, whole_book or specific_topics")
     specific_topics: Optional[str] = None
     detail_level: str = Field(..., description="Detail level: overview, detailed, or in-depth")
     difficulty: str = Field(..., description="Difficulty: beginner, intermediate, or advanced")
@@ -178,3 +178,36 @@ class CurriculumScriptRequest(BaseModel):
     detail_level: str = Field(..., description="Detail level: overview, detailed, or in-depth")
     difficulty: str = Field(..., description="Difficulty: beginner, intermediate, or advanced")
     duration: int = Field(..., description="Duration in minutes")
+
+# User Activity and Progress Tracking Models
+class UserActivityModel(BaseModel):
+    id: Optional[int] = None
+    user_id: str
+    activity_type: str  # "login", "dashboard_view", "book_added", "script_created", "chat_started", etc.
+    activity_date: Optional[datetime] = None
+    metadata: Optional[str] = None  # JSON string for additional data
+
+class UserCourseProgressModel(BaseModel):
+    id: Optional[int] = None
+    user_id: str
+    course_id: Optional[int] = None
+    book_id: Optional[int] = None
+    progress_percentage: Optional[float] = 0.0
+    completed: Optional[bool] = False
+    last_accessed: Optional[datetime] = None
+    enrolled_at: Optional[datetime] = None
+
+class UserStatsModel(BaseModel):
+    totalBooks: int
+    totalScripts: int
+    totalSessions: int
+    totalChats: int
+    learningHours: float
+    streak: int
+    lastActivity: str
+
+class RecentActivityModel(BaseModel):
+    courseName: str
+    lastAccessed: str
+    progress: float
+    activityType: str

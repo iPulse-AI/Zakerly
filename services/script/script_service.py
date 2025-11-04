@@ -1069,6 +1069,16 @@ Please generate a complete, professional lecture script that provides focused, d
     async def create_lecture_script(self, user_id: str, request: LectureScriptRequest) -> dict:
         """Create a new lecture script"""
         try:
+            # ✅ CRITICAL: Validate user exists before creating script
+            user_check_query = "SELECT id FROM users WHERE id = $1"
+            user_check_result = await self.db.execute_query(user_check_query, user_id)
+            
+            if not user_check_result or len(user_check_result) == 0:
+                logger.error(f"❌ User with ID {user_id} not found in database. User needs to log in again.")
+                raise ValueError("User not found. Please log out and log in again to refresh your session.")
+            
+            logger.info(f"✅ User {user_id} validated successfully")
+            
             query = """
                 INSERT INTO lecture_scripts 
                 (user_id, book_id, title, scope, specific_topics, detail_level, difficulty, duration, content)
@@ -1106,6 +1116,9 @@ Please generate a complete, professional lecture script that provides focused, d
             
             return None
             
+        except ValueError as ve:
+            # Re-raise validation errors
+            raise ve
         except Exception as e:
             logger.error(f"❌ Error creating lecture script: {e}")
             raise e

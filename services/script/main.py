@@ -108,9 +108,26 @@ async def create_script(
     try:
         script = await script_service.create_lecture_script(user_id, request)
         return script
+    except ValueError as ve:
+        # Handle user validation errors with clear message
+        error_msg = str(ve)
+        logger.error(f"⚠️ Validation error creating script: {error_msg}")
+        if "User not found" in error_msg or "log in again" in error_msg:
+            raise HTTPException(
+                status_code=401, 
+                detail="Your session has expired. Please log out and log back in to continue."
+            )
+        raise HTTPException(status_code=400, detail=error_msg)
     except Exception as e:
         logger.error(f"Error creating script: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        # Check if it's a foreign key constraint error (backup check)
+        error_detail = str(e)
+        if "foreign key constraint" in error_detail.lower() or "fk_lecture_script_user" in error_detail.lower():
+            raise HTTPException(
+                status_code=401,
+                detail="Your session has expired. Please log out and log back in to continue."
+            )
+        raise HTTPException(status_code=500, detail=f"Internal server error: {error_detail}")
 
 @app.get("/scripts/{script_id}")
 async def get_script(

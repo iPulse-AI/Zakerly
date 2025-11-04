@@ -18,6 +18,7 @@ interface AuthContextType {
   logout: () => void;
   forceLogout: () => void; // Force logout and clear all data
   isLoading: boolean;
+  trackActivity: (activityType: string, metadata?: any) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -80,12 +81,39 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setUser(decodedUser);
       setToken(newToken);
       
+      // Track login activity
+      trackActivity('login').catch(err => console.warn('Failed to track login activity:', err));
+      
       // Navigate to home page after successful login
       navigate('/home');
       
     } catch (error) {
       console.error("AuthContext: Failed to decode token on login.", error);
       throw new Error("Invalid token");
+    }
+  };
+
+  const trackActivity = async (activityType: string, metadata: any = {}) => {
+    try {
+      if (!token) return;
+      
+      const response = await fetch('/api/auth/track-activity', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          activity_type: activityType,
+          metadata: JSON.stringify(metadata)
+        }),
+      });
+      
+      if (!response.ok) {
+        console.warn('Failed to track activity:', response.statusText);
+      }
+    } catch (error) {
+      console.warn('Error tracking activity:', error);
     }
   };
 
@@ -108,7 +136,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, forceLogout, isLoading }}>
+    <AuthContext.Provider value={{ user, token, login, logout, forceLogout, isLoading, trackActivity }}>
       {children}
     </AuthContext.Provider>
   );

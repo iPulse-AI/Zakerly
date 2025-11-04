@@ -13,9 +13,11 @@ import { Badge } from '../components/ui/badge';
 import { Loader2, Presentation as PresentationIcon, Trash2, Eye, Plus, Sparkles } from 'lucide-react';
 import { Alert, AlertDescription } from '../components/ui/alert';
 import { Switch } from '../components/ui/switch';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function Presentations() {
   const navigate = useNavigate();
+  const { user } = useAuth(); // ✅ Get authenticated user
   const [presentations, setPresentations] = useState<Presentation[]>([]);
   const [curriculums, setCurriculums] = useState<Curriculum[]>([]);
   const [books, setBooks] = useState<Book[]>([]);
@@ -36,7 +38,7 @@ export default function Presentations() {
     include_code_examples: false,
   });
 
-  const userId = Utils.generateUserId();
+  const userId = user?.sub || ''; // ✅ Use authenticated user's ID
 
   useEffect(() => {
     loadData();

@@ -100,8 +100,8 @@ export class ChatService {
     return apiClient.post<{ lecture: string }>(API_ENDPOINTS.GENERATE_LECTURE, request);
   }
 
-  static async generateCurriculumScript(request: any): Promise<any> {
-    const userId = Utils.generateUserId(); // Get or generate user ID
+  static async generateCurriculumScript(userId: string, request: any): Promise<any> {
+    // ✅ Use authenticated user ID passed as parameter
     const endpoint = `${API_ENDPOINTS.GENERATE_CURRICULUM_SCRIPT}?user_id=${userId}`;
     return apiClient.post<any>(endpoint, request);
   }

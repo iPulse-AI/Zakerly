@@ -891,6 +891,18 @@ Topics:"""
         """Create presentation in database"""
         try:
             async with self.get_db_connection() as conn:
+                # ✅ CRITICAL: Validate user exists before creating presentation
+                user_check = await conn.fetchrow(
+                    "SELECT id FROM users WHERE id = $1",
+                    user_id
+                )
+                
+                if not user_check:
+                    logger.error(f"❌ User with ID {user_id} not found in database. User needs to log in again.")
+                    raise ValueError("User not found. Please log out and log in again to refresh your session.")
+                
+                logger.info(f"✅ User {user_id} validated successfully")
+                
                 result = await conn.fetchrow("""
                     INSERT INTO presentations (
                         user_id, book_id, title, scope, specific_topics,
@@ -907,6 +919,9 @@ Topics:"""
                 
                 return dict(result)
                 
+        except ValueError as ve:
+            # Re-raise validation errors
+            raise ve
         except Exception as e:
             logger.error(f"Error creating presentation: {e}")
             raise e

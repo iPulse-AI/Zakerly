@@ -47,6 +47,7 @@ const targetAudienceOptions = [
 export default function Scripts() {
   const { bookTitle } = useParams<{ bookTitle: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth(); // ✅ Get authenticated user
   
   // State for curriculums and books
   const [curriculums, setCurriculums] = useState<Curriculum[]>([]);
@@ -183,7 +184,8 @@ export default function Scripts() {
 
       console.log('🚀 Sending script request:', scriptRequest);
 
-      const response = await ChatService.generateCurriculumScript(scriptRequest);
+      const userId = user?.sub || ''; // ✅ Use authenticated user's ID
+      const response = await ChatService.generateCurriculumScript(userId, scriptRequest);
 
       if (response && response.script_content) {
         console.log('✅ Script generated successfully:', response);
@@ -191,7 +193,6 @@ export default function Scripts() {
         
         // Save the script to the database
         try {
-          const userId = localStorage.getItem('zakerly_user_id') || 'default-user';
           
           const scriptToSave = {
             title: scriptRequest.title,
