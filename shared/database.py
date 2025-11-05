@@ -452,6 +452,6 @@ def get_database() -> DatabaseManager:
     """Get database manager instance"""
     global db_manager
     if not db_manager:
-        database_url = os.getenv("DATABASE_URL", "postgresql://zakerly_user:zakerly_password@localhost:5432/zakerly_db")
+        database_url = os.getenv("DATABASE_URL", "postgresql://zakerly_user:zakerly_password@localhost:5433/zakerly_db")
         db_manager = DatabaseManager(database_url)
     return db_manager

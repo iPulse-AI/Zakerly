@@ -50,7 +50,8 @@ def sanitize_title_for_table(title: str) -> str:
 
 class RedisManager:
     def __init__(self, redis_url: str = None):
-        self.redis_url = redis_url or os.getenv("REDIS_URL", "redis://localhost:6379")
+        """Initialize Redis connection"""
+        self.redis_url = redis_url or os.getenv("REDIS_URL", "redis://localhost:6380")
         self.client: Optional[redis.Redis] = None
 
     def connect(self):

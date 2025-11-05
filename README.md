@@ -82,11 +82,11 @@ docker-compose ps
 ```
 
 ### 4. Access the Platform
-- **Frontend**: http://localhost:3000
-- **API Gateway**: http://localhost:8000
-- **pgAdmin**: http://localhost:8080 (admin@zakerly.com / admin123)
+- **Frontend**: http://localhost:3001
+- **API Gateway**: http://localhost:8007
+- **pgAdmin**: http://localhost:8081 (admin@zakerly.com / admin123)
 - **Prometheus**: http://localhost:9090
-- **Grafana**: http://localhost:3001 (admin / admin123)
+- **Grafana**: http://localhost:3002 (admin / admin123)
 
 ## 📖 Usage Guide
 
@@ -246,12 +246,12 @@ docker-compose exec postgres psql -U zakerly_user -d zakerly_db -f /path/to/migr
 ### Health Checks
 ```bash
 # Check all services
-curl http://localhost:8000/api/v1/status
+curl http://localhost:8007/api/v1/status
 
 # Individual service health
-curl http://localhost:8001/health  # Ingestion
-curl http://localhost:8002/health  # Chat
-curl http://localhost:8000/health  # Gateway
+curl http://localhost:8008/health  # Ingestion
+curl http://localhost:8009/health  # Chat
+curl http://localhost:8007/health  # Gateway
 ```
 
 ### Metrics
