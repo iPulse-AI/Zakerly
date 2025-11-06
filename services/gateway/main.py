@@ -55,10 +55,10 @@ app = FastAPI(
 )
 
 
-# CORS middleware
+# CORS middleware - Configured to allow ZeroTier network access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=["*"],  # Allows all origins including ZeroTier IPs (172.24.111.111:3001)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
